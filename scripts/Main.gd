@@ -148,13 +148,7 @@ func _build_interface() -> void:
 	var popup := more.get_popup()
 	for item in [["プロジェクトを開く", 1], ["Godotへ出力", 2], ["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
 		popup.add_item(str(item[0]), int(item[1]))
-	popup.id_pressed.connect(func(id: int):
-		match id:
-			1: _toolbar_action("open")
-			2: _toolbar_action("export")
-			3: _toolbar_action("undo")
-			4: _toolbar_action("redo")
-			5: _show_help())
+	popup.id_pressed.connect(_on_more_action)
 
 	preview_container = SubViewportContainer.new()
 	preview_container.stretch = true
@@ -285,6 +279,14 @@ func _build_interface() -> void:
 	message_label.add_theme_font_size_override("font_size", 13)
 	message_label.add_theme_color_override("font_color", Color("b7c9db"))
 	message_label.custom_minimum_size.y = 19
+
+func _on_more_action(id: int) -> void:
+	match id:
+		1: _toolbar_action("open")
+		2: _toolbar_action("export")
+		3: _toolbar_action("undo")
+		4: _toolbar_action("redo")
+		5: _show_help()
 
 func _change_mode(new_mode: String) -> void:
 	if mode == new_mode and editor_body.visible:
@@ -695,6 +697,7 @@ func _inspector_ik() -> void:
 	_add_text(inspector, "IKチェーンと目標点", true)
 	var row := _row(inspector)
 	var chain_select := OptionButton.new()
+	
 	chain_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for chain in rig.chains:
 		chain_select.add_item(str(chain["name"]))
@@ -714,6 +717,7 @@ func _inspector_ik() -> void:
 	var calculation := _row(inspector)
 	_add_text(calculation, "計算方法")
 	var method_select := OptionButton.new()
+	
 	for method_name in ["CCD", "FABRIK", "2ボーン"]:
 		method_select.add_item(method_name)
 		if method_name == chain["method"]:
@@ -725,6 +729,7 @@ func _inspector_ik() -> void:
 		var line := _row(inspector)
 		_add_text(line, item[1])
 		var picker := OptionButton.new()
+		
 		picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		for joint_name in rig.parts.keys():
 			picker.add_item(joint_name)
@@ -819,6 +824,7 @@ func _inspector_contacts() -> void:
 		_refresh_inspector(), top)
 	if not rig.test_objects.is_empty():
 		var choices := OptionButton.new()
+	
 		for test in rig.test_objects:
 			choices.add_item(str(test["node"].name))
 		selected_test = clampi(selected_test, 0, rig.test_objects.size() - 1)
