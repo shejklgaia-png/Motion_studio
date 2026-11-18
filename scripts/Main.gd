@@ -94,7 +94,7 @@ func _ready() -> void:
 func _make_button(label: String, callback: Callable, owner: Node) -> Button:
 	var button := Button.new()
 	button.text = label
-	button.custom_minimum_size = Vector2(0, 44)
+	button.custom_minimum_size = Vector2(0, 48)
 	button.focus_mode = Control.FOCUS_ALL
 	button.pressed.connect(callback)
 	owner.add_child(button)
@@ -191,11 +191,11 @@ func _build_interface() -> void:
 	play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(play_button, false, true)
 	undo_button = _make_button("↶", func(): _toolbar_action("undo"), toolbar)
-	undo_button.custom_minimum_size.x = 44
+	undo_button.custom_minimum_size.x = 48
 	undo_button.tooltip_text = "編集を取り消す"
 	_style_button(undo_button)
 	redo_button = _make_button("↷", func(): _toolbar_action("redo"), toolbar)
-	redo_button.custom_minimum_size.x = 44
+	redo_button.custom_minimum_size.x = 48
 	redo_button.tooltip_text = "編集をやり直す"
 	_style_button(redo_button)
 	var more := MenuButton.new()
@@ -386,7 +386,7 @@ func _build_interface() -> void:
 	part_picker.fit_to_longest_item = false
 	part_picker.clip_text = true
 	part_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	part_picker.custom_minimum_size.y = 40
+	part_picker.custom_minimum_size.y = 48
 	part_picker.item_selected.connect(func(index: int):
 		selected_part = part_picker.get_item_text(index)
 		_refresh_timeline_view()
@@ -403,7 +403,7 @@ func _build_interface() -> void:
 	animation_picker.fit_to_longest_item = false
 	animation_picker.clip_text = true
 	animation_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	animation_picker.custom_minimum_size.y = 40
+	animation_picker.custom_minimum_size.y = 48
 	animation_picker.disabled = true
 	animation_picker.add_item("モデル読込後に選択")
 	animation_picker.item_selected.connect(func(index: int):
