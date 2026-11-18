@@ -39,6 +39,112 @@ func add_sample_animation() -> void:
 	frames.insert(2, {"time": 1.4, "poses": sample2})
 	evaluate(0.0)
 
+# Convert Blockbench channels into editable local poses, at a fixed sampling rate.
+# Keeping the source animation in rig.bb_animations allows switching without reimporting.
+func load_bb_animation(index: int) -> String:
+	if index < 0 or index >= rig.bb_animations.size():
+		return "選択されたモーションがありません"
+	var animation: Dictionary = rig.bb_animations[index]
+	var animators: Dictionary = animation.get("animators", {})
+	var channels: Dictionary = {}
+	var latest: float = 0.0
+	for uuid in animators.keys():
+		var part: String = str(rig.bb_uuid_to_name.get(str(uuid), ""))
+		if part == "" or not (animators[uuid] is Dictionary):
+			continue
+		var animator: Dictionary = animators[uuid]
+		if not channels.has(part):
+			channels[part] = {}
+		for keyframe in animator.get("keyframes", []):
+			if not (keyframe is Dictionary):
+				continue
+			var channel := str(keyframe.get("channel", ""))
+			if not (channel in ["position", "rotation", "scale"]):
+				continue
+			if not channels[part].has(channel):
+				channels[part][channel] = []
+			channels[part][channel].append(keyframe)
+			latest = maxf(latest, float(keyframe.get("time", 0.0)))
+	for part in channels.keys():
+		for channel in channels[part].keys():
+			channels[part][channel].sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return float(a.get("time", 0.0)) < float(b.get("time", 0.0)))
+	duration = maxf(0.1, float(animation.get("length", 0.0)), latest)
+	fps = clampi(int(animation.get("snapping", 24)), 24, 60)
+	constraints.clear()
+	history.clear()
+	future.clear()
+	frames.clear()
+	var frame_total := min(1800, int(ceil(duration * float(fps))) + 1)
+	for i in range(frame_total):
+		var t := minf(float(i) / float(fps), duration)
+		if i == frame_total - 1:
+			t = duration
+		var poses: Dictionary = rig.rest.duplicate(true)
+		for part in channels.keys():
+			if not poses.has(part):
+				continue
+			var pose: Dictionary = poses[part].duplicate(true)
+			for channel in channels[part].keys():
+				var sampled := _bb_channel_value(channels[part][channel], t, channel)
+				var base := MotionRig.from_array(pose[channel])
+				match channel:
+					"position":
+						base += sampled / 16.0
+					"rotation":
+						base += sampled
+					"scale":
+						base *= sampled
+				pose[channel] = MotionRig.vec3_array(base)
+			poses[part] = pose
+		frames.append({"time": t, "poses": poses})
+	play_time = 0.0
+	evaluate(0.0)
+	return "「%s」を読み込みました：%dパーツ、%.2f秒" % [str(animation.get("name", "無題")), channels.size(), duration]
+
+func _bb_channel_vector(frame: Dictionary, channel: String, pre: bool) -> Vector3:
+	var points: Array = frame.get("data_points", [])
+	if points.is_empty():
+		return Vector3.ONE if channel == "scale" else Vector3.ZERO
+	var point: Variant = points[0] if pre or points.size() == 1 else points[points.size() - 1]
+	if not (point is Dictionary):
+		return Vector3.ONE if channel == "scale" else Vector3.ZERO
+	var values := Vector3(str(point.get("x", "0")).to_float(),
+		str(point.get("y", "0")).to_float(),
+		str(point.get("z", "0")).to_float())
+	if rig.bb_legacy_axes:
+		if channel == "position":
+			values.x = -values.x
+		elif channel == "rotation":
+			values.x = -values.x
+			values.y = -values.y
+	return values
+
+func _bb_channel_value(track: Array, at_time: float, channel: String) -> Vector3:
+	if track.is_empty():
+		return Vector3.ONE if channel == "scale" else Vector3.ZERO
+	var left: Dictionary = track[0]
+	var right: Dictionary = track[track.size() - 1]
+	for keyframe in track:
+		if float(keyframe.get("time", 0.0)) <= at_time:
+			left = keyframe
+		if float(keyframe.get("time", 0.0)) >= at_time:
+			right = keyframe
+			break
+	if left == right:
+		return _bb_channel_vector(left, channel, false)
+	var a := _bb_channel_vector(left, channel, false)
+	var b := _bb_channel_vector(right, channel, true)
+	if str(left.get("interpolation", "linear")) == "step":
+		return a
+	var span := float(right.get("time", 0.0)) - float(left.get("time", 0.0))
+	if span <= 0.00001:
+		return a
+	var weight := clampf((at_time - float(left.get("time", 0.0))) / span, 0.0, 1.0)
+	if str(left.get("interpolation", "")) == "catmullrom":
+		weight = weight * weight * (3.0 - 2.0 * weight)
+	return a.lerp(b, weight)
+
 func _sort_key(a: Dictionary, b: Dictionary) -> bool:
 	return float(a["time"]) < float(b["time"])
 
