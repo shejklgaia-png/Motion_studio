@@ -7,6 +7,9 @@ var rest: Dictionary = {}                  # name -> numeric pose
 var chains: Array = []                    # root/mid/end/target/method settings
 var test_objects: Array = []
 var imported_source: String = "sample"
+var bb_animations: Array = []
+var bb_uuid_to_name: Dictionary = {}
+var bb_import_warnings: Array[String] = []
 var _target_group: Node3D
 var model_root: Node3D
 var _unique_names: Dictionary = {}
@@ -28,6 +31,9 @@ func _clear_model() -> void:
 	chains.clear()
 	test_objects.clear()
 	_unique_names.clear()
+	bb_animations.clear()
+	bb_uuid_to_name.clear()
+	bb_import_warnings.clear()
 
 func _color(rgb: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
@@ -225,60 +231,20 @@ func get_contact_report() -> Array:
 				notices.append(name + " ↔ " + str(hit.name) + "：接触")
 	return notices
 
-# Rudimentary Blockbench cube/group support. Textures and skinning intentionally not fabricated.
+# Supports free meshes and cubes, including Blockbench 5 separate group definitions.
 func load_bbmodel(path: String) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		return "ファイルを開けません"
+		return "選択したファイルを開けません: " + str(FileAccess.get_open_error())
 	var json := JSON.new()
-	if json.parse(file.get_as_text()) != OK or not (json.data is Dictionary):
-		return "bbmodelのJSONを解析できません"
+	var result := json.parse(file.get_as_text())
+	if result != OK or not (json.data is Dictionary):
+		return "JSONの読み込みに失敗: " + json.get_error_message()
 	var data: Dictionary = json.data
 	if not data.has("elements"):
-		return "elementsがありません"
-	_clear_model()
-	imported_source = path
-	model_root = Node3D.new()
-	model_root.name = "BlockbenchModel"
-	add_child(model_root)
-	var element_map: Dictionary = {}
-	for entry in data.get("elements", []):
-		if entry is Dictionary:
-			element_map[str(entry.get("uuid", ""))] = entry
-	var group_root: Dictionary = {"origin": [8, 0, 8], "children": data.get("outliner", [])}
-	_import_bb_children(group_root.get("children", []), model_root, Vector3(8, 0, 8), element_map)
-	if parts.is_empty():
-		return "読み込めるパーツがありません"
-	store_rest()
-	return ""
-
-func _bb_vec(raw: Variant) -> Vector3:
-	if raw is Array and raw.size() >= 3:
-		return Vector3(float(raw[0]), float(raw[1]), float(raw[2]))
-	return Vector3.ZERO
-
-func _import_bb_children(children: Array, parent: Node3D, parent_origin: Vector3, elements: Dictionary) -> void:
-	for item in children:
-		if item is Dictionary:
-			var group: Dictionary = item
-			var pivot := _bb_vec(group.get("origin", [8, 0, 8]))
-			var joint := Node3D.new()
-			joint.position = (pivot - parent_origin) / 16.0
-			joint.rotation_degrees = _bb_vec(group.get("rotation", [0, 0, 0]))
-			parent.add_child(joint)
-			_register_part(str(group.get("name", "グループ")), joint)
-			_import_bb_children(group.get("children", []), joint, pivot, elements)
-		elif elements.has(str(item)):
-			var cube: Dictionary = elements[str(item)]
-			var a := _bb_vec(cube.get("from", [0, 0, 0]))
-			var b := _bb_vec(cube.get("to", [16, 16, 16]))
-			var pivot := _bb_vec(cube.get("origin", [8, 0, 8]))
-			var cube_node := Node3D.new()
-			cube_node.position = (pivot - parent_origin) / 16.0
-			cube_node.rotation_degrees = _bb_vec(cube.get("rotation", [0, 0, 0]))
-			parent.add_child(cube_node)
-			var name := _register_part(str(cube.get("name", "キューブ")), cube_node)
-			_box(cube_node, (b - a).abs() / 16.0, (a + b - pivot * 2.0) / 32.0, Color("8aa9bf"), name)
+		return "Blockbenchの.bbmodel形式ではありません"
+	var importer := BBModelImporter.new()
+	return importer.import_data(self, data, path)
 
 func load_gltf(path: String) -> String:
 	var document := GLTFDocument.new()
