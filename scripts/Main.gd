@@ -1,6 +1,6 @@
 extends Control
 
-const MODES := ["モーション", "IK", "制約", "接触", "診断", "書き出し"]
+const MODES := ["モーション", "IK", "制約", "接触", "診断", "ベイク"]
 var rig: MotionRig
 var motion: MotionEngine
 var stage: Node3D
@@ -281,7 +281,7 @@ func _build_interface() -> void:
 	var tabs := _row(tabs_scroll)
 	for item in MODES:
 		var new_mode: String = item
-		var caption: String = "出力" if item == "書き出し" else str(item)
+		var caption: String = str(item)
 		var tab := _make_button(caption, func(): _change_mode(new_mode), tabs)
 		tab.custom_minimum_size.x = 82 if item != "モーション" else 100
 		mode_buttons[item] = tab
@@ -714,7 +714,7 @@ func _refresh_inspector() -> void:
 		"制約": "動かせる範囲を設定",
 		"接触": "箱や球を置いて接触をテスト",
 		"診断": "動作の問題を確認",
-		"書き出し": "Godot向けに出力"
+		"ベイク": "IK/FKの結果をキーフレーム化"
 	}
 	var hint := _add_text(inspector, str(hints.get(mode, "")))
 	hint.add_theme_font_size_override("font_size", 13)
@@ -725,7 +725,7 @@ func _refresh_inspector() -> void:
 		"制約": _inspector_constraints()
 		"接触": _inspector_contacts()
 		"診断": _inspector_diagnostics()
-		"書き出し": _inspector_export()
+		"ベイク": _inspector_export()
 
 func _vector_fields(title: String, value: Vector3, low: float, high: float, step: float, changed: Callable) -> void:
 	var group := VBoxContainer.new()
@@ -1039,18 +1039,10 @@ func _inspector_diagnostics() -> void:
 
 func _inspector_export() -> void:
 	_bake_controls()
-	_add_text(inspector, "保存・読み込み・Godotへ出力", true)
-	_make_button("プロジェクトをアプリ内に保存", func(): _note(motion.save_project("user://motion_studio.motion.json")), inspector)
-	_make_button("プロジェクトを別名で保存", func(): _file_dialog("save_as"), inspector)
-	_make_button("前回の自動保存を復元", func():
-		var result := motion.load_project("user://autosave.motion.json")
-		_after_model_change(result), inspector)
-	_make_button("Godotアニメーション(.tres)を出力", func():
-		_note(motion.export_animation_tres("user://motion_animation.tres")), inspector)
-	_make_button("Godotアニメーションを別名で出力", func(): _file_dialog("export"), inspector)
-	_add_text(inspector, "ベイク前でも出力時にIKをサンプリングします。ベイク後は保存済みFKだけを出力します。")
-	_add_text(inspector, "ユーザーデータ保存場所：" + OS.get_user_data_dir())
-	_add_text(inspector, "Androidでは外部ファイルへのアクセスや保存先の選択が端末・権限に依存します。")
+	var header := _add_text(inspector, "ファイルの保存・読み込み", true)
+	header.add_theme_color_override("font_color", Color("acc7d6"))
+	_add_text(inspector, "上部の「ファイル ▾」から、モデル読み込み・保存・復元・Godot書き出しを選べます。")
+	_add_text(inspector, "ベイク済みモーションは、IKの再計算なしでGodotアニメーションへ書き出せます。")
 
 func _plane_position(screen_pos: Vector2, height: float) -> Vector3:
 	var origin := camera.project_ray_origin(screen_pos)
