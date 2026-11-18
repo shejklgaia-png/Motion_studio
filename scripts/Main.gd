@@ -192,7 +192,7 @@ func _build_interface() -> void:
 	zoom_in.custom_minimum_size.x = 46
 	_style_button(zoom_in)
 
-	var guide := _add_text(layout, "関節タップ→色付き円をドラッグ。回転・移動・拡縮切替可")
+	var guide := _add_text(layout, "関節タップ → 赤X・緑Y・青Zの円をドラッグして編集")
 	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
 	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
