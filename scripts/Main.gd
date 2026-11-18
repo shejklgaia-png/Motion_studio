@@ -51,6 +51,9 @@ var guide_step: int = 0
 var animation_picker: OptionButton
 var camera_focus: Vector3 = Vector3(0, 1.05, 0)
 var play_button: Button
+var undo_button: Button
+var redo_button: Button
+var fit_button: Button
 var help_popup: AcceptDialog
 var selected_part: String = "胴体"
 var selected_chain: int = 0
@@ -81,6 +84,7 @@ func _ready() -> void:
 	_update_timeline()
 	_update_gizmo()
 	_refresh_action_hint()
+	_update_history_buttons()
 	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
 	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
 		call_deferred("_show_help")
@@ -184,6 +188,14 @@ func _build_interface() -> void:
 	play_button = _make_button("▶ 再生", _toggle_playback, toolbar)
 	play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(play_button, false, true)
+	undo_button = _make_button("↶", func(): _toolbar_action("undo"), toolbar)
+	undo_button.custom_minimum_size.x = 44
+	undo_button.tooltip_text = "編集を取り消す"
+	_style_button(undo_button)
+	redo_button = _make_button("↷", func(): _toolbar_action("redo"), toolbar)
+	redo_button.custom_minimum_size.x = 44
+	redo_button.tooltip_text = "編集をやり直す"
+	_style_button(redo_button)
 	var more := MenuButton.new()
 	more.text = "操作 ▾"
 	more.custom_minimum_size.y = 44
@@ -224,6 +236,16 @@ func _build_interface() -> void:
 	selection_badge.add_theme_font_size_override("font_size", 12)
 	selection_badge.add_theme_color_override("font_color", Color("6dc5ff"))
 	preview_frame.add_child(selection_badge)
+	fit_button = _make_button("全体表示", _fit_import_camera, preview_frame)
+	fit_button.anchor_left = 1.0
+	fit_button.anchor_right = 1.0
+	fit_button.offset_left = -102
+	fit_button.offset_right = -8
+	fit_button.offset_top = 8
+	fit_button.offset_bottom = 47
+	fit_button.custom_minimum_size.y = 39
+	fit_button.tooltip_text = "モデル全体をカメラの中心に表示"
+	_style_button(fit_button)
 
 	# Transform tool switches float at the lower-right corner of the preview.
 	preview_tools_panel = PanelContainer.new()
@@ -274,10 +296,11 @@ func _build_interface() -> void:
 	seek.max_value = 3.0
 	seek.step = 0.001
 	seek.custom_minimum_size.y = 23
-	seek.value_changed.connect(_seek_to)
+	seek.value_changed.connect(_on_user_seek)
 	timeline.add_child(seek)
 	timeline_view = MotionTimelineView.new()
-	timeline_view.seek_requested.connect(_seek_to)
+	timeline_view.seek_requested.connect(_on_user_seek)
+	timeline_view.key_move_requested.connect(_on_key_move_requested)
 	timeline.add_child(timeline_view)
 	var transport := _row(timeline)
 	for item in [["◀", -1.0], ["▶|", 1.0]]:
@@ -424,6 +447,30 @@ func _on_more_action(id: int) -> void:
 		4: _toolbar_action("redo")
 		5: _show_help()
 
+func _update_history_buttons() -> void:
+	if undo_button != null and motion != null:
+		undo_button.disabled = motion.history.is_empty()
+	if redo_button != null and motion != null:
+		redo_button.disabled = motion.future.is_empty()
+
+func _on_user_seek(value: float) -> void:
+	if playing:
+		playing = false
+		play_button.text = "▶ 再生"
+	_seek_to(value)
+
+func _on_key_move_requested(from_time: float, to_time: float) -> void:
+	playing = false
+	play_button.text = "▶ 再生"
+	if motion.move_keyframe(from_time, to_time):
+		_refresh_key_buttons()
+		_seek_to(motion.play_time)
+		_note("◆ %.2f秒 → %.2f秒へ移動（全身フレーム）。↶で取り消せます" % [from_time, motion.play_time])
+	else:
+		_seek_to(from_time)
+		_note("キー移動不可：先頭・末尾、または既存キーと重複しています")
+	_update_history_buttons()
+
 func _choose_transform(kind: String) -> void:
 	active_transform = kind
 	pan_view = false
@@ -479,7 +526,7 @@ func _refresh_action_hint() -> void:
 		return
 	var descriptions: Dictionary = {
 		"階層": "部位をタップして選択 →「動き編集」で回転を変更",
-		"モーション": "黄色い◆で時間を選択 → 3D画面で関節を回転",
+		"モーション": "黄色い◆で時間選択／ドラッグでキー移動 → 関節を回転",
 		"IK": "足先の目標点を選び、ドラッグして位置を設定",
 		"制約": "関節を選び、動かせる角度や範囲を設定",
 		"接触": "床・箱・球との接触を確認",
@@ -512,7 +559,7 @@ func _display_help_step() -> void:
 	var pages := [
 		"1 / 3  モデルを読み込む\n\n上の「ファイル」→「モデルを読み込む」で .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
 		"2 / 3  部位とモーションを選ぶ\n\n上の「階層」で関節の親子関係を確認。\n「モーション」で部位やアニメーションを選びます。",
-		"3 / 3  タイムラインで編集\n\n下の黄色い◆がキーフレームです。\n青い再生位置を動かし、3Dの回転リングで編集します。"
+		"3 / 3  タイムラインで編集\n\n黄色い◆をタップして時間を選択。\nドラッグしてキーを移動でき、↶で取り消せます。"
 	]
 	help_popup.dialog_text = pages[guide_step]
 	help_popup.ok_button_text = "完了" if guide_step == 2 else "次へ"
@@ -602,9 +649,15 @@ func _toolbar_action(action: String) -> void:
 		"open": _file_dialog("open")
 		"export": _note(motion.export_animation_tres("user://motion_animation.tres"))
 		"undo":
-			if motion.undo(): _after_model_change("操作を取り消しました")
+			if motion.undo():
+				_after_model_change("操作を取り消しました")
+			else:
+				_note("取り消せる操作はありません")
 		"redo":
-			if motion.redo(): _after_model_change("操作をやり直しました")
+			if motion.redo():
+				_after_model_change("操作をやり直しました")
+			else:
+				_note("やり直せる操作はありません")
 
 func _file_dialog(kind: String) -> void:
 	var picker := FileDialog.new()
@@ -735,7 +788,7 @@ func _update_selection_badge() -> void:
 
 func _refresh_timeline_view() -> void:
 	if timeline_view != null and motion != null:
-		timeline_view.set_timeline(motion.frames, selected_part, motion.duration, motion.play_time)
+		timeline_view.set_timeline(motion.frames, selected_part, motion.duration, motion.play_time, motion.fps)
 
 func _on_outliner_selected(name: String) -> void:
 	selected_part = name
@@ -798,12 +851,15 @@ func _insert_key() -> void:
 	motion.record_undo()
 	motion.capture_key(motion.play_time)
 	_refresh_key_buttons()
+	_update_history_buttons()
 	_note("現在の姿勢をキーフレームに保存しました")
 
 func _remove_key() -> void:
 	motion.record_undo()
 	motion.delete_key(motion.play_time)
 	_refresh_key_buttons()
+	_update_history_buttons()
+	_note("現在のキーを削除しました（元に戻すには↶）")
 
 func _process(delta: float) -> void:
 	if motion == null:
@@ -817,6 +873,7 @@ func _process(delta: float) -> void:
 	status_clock += delta
 	if status_clock >= 0.25:
 		status_clock = 0.0
+		_update_history_buttons()
 		if mode == "診断":
 			_refresh_inspector()
 	if save_clock >= 60.0:
