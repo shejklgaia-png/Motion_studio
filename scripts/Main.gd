@@ -446,6 +446,10 @@ func _zoom(multiplier: float) -> void:
 func _update_gizmo() -> void:
 	if motion_gizmo == null or rig == null or camera == null:
 		return
+	if mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
+		var target: Node3D = rig.chains[selected_chain]["target"]
+		motion_gizmo.set_state(target, camera, "移動", drag_axis, not pan_view and not playing)
+		return
 	var show_handles: bool = mode in ["モーション", "階層"] and not pan_view and not playing and rig.parts.has(selected_part)
 	var selected_node: Node3D = rig.parts[selected_part] if rig.parts.has(selected_part) else null
 	motion_gizmo.set_state(selected_node, camera, active_transform, drag_axis, show_handles)
@@ -991,7 +995,8 @@ func _inspector_ik() -> void:
 		chain_select.select(selected_chain)
 	chain_select.item_selected.connect(func(i: int):
 		selected_chain = i
-		_refresh_inspector())
+		_refresh_inspector()
+		_update_gizmo())
 	row.add_child(chain_select)
 	_make_button("IKを追加", _add_ik_chain, row)
 	if rig.chains.is_empty():
@@ -1005,6 +1010,7 @@ func _inspector_ik() -> void:
 	method_select.fit_to_longest_item = false
 	method_select.clip_text = true
 	
+	_add_text(inspector, "「2ボーン」は関節長を維持する解析IKです。膝の曲がる向きは下の「膝方向」で調整できます。")
 	for method_name in ["CCD", "FABRIK", "2ボーン"]:
 		method_select.add_item(method_name)
 		if method_name == chain["method"]:
@@ -1033,10 +1039,15 @@ func _inspector_ik() -> void:
 			pos[axis] = value
 			goal.global_position = pos
 			motion.evaluate(motion.play_time))
+	_vector_fields("膝方向（ワールド方向）", MotionRig.from_array(chain.get("pole", [0.0, 0.0, 1.0])), -1.0, 1.0, 0.05,
+		func(axis: int, value: float):
+			var pole: Array = chain.get("pole", [0.0, 0.0, 1.0]).duplicate()
+			pole[axis] = value
+			_set_chain_prop("pole", pole))
 	_number_field("IK強度", chain["weight"], 0.0, 1.0, 0.05, func(v: float): _set_chain_prop("weight", v))
 	_number_field("開始 (秒)", chain["start"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("start", v))
 	_number_field("終了 (秒)", chain["finish"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("finish", v))
-	_add_text(inspector, "画面上の緑の球をドラッグすると、IK目標を直接動かせます。")
+	_add_text(inspector, "目標の赤・緑・青の矢印を指でドラッグすると、X・Y・Z軸を個別に動かせます。")
 
 func _add_ik_chain() -> void:
 	var names: Array = rig.parts.keys()
@@ -1282,7 +1293,10 @@ func _viewport_input(event: InputEvent) -> void:
 		_move_pointer(_camera_screen_position(event.position), _camera_screen_position(event.relative))
 
 func _start_transform_drag(point: Vector2) -> bool:
-	if mode not in ["モーション", "階層"] or pan_view or not rig.parts.has(selected_part) or playing:
+	if pan_view or playing:
+		return false
+	var moving_ik: bool = mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size()
+	if not moving_ik and (mode not in ["モーション", "階層"] or not rig.parts.has(selected_part)):
 		return false
 	var hit: Dictionary = motion_gizmo.hit_test(point)
 	if hit.is_empty():
@@ -1290,16 +1304,21 @@ func _start_transform_drag(point: Vector2) -> bool:
 	drag_axis = int(hit["axis"])
 	drag_tangent = hit["tangent"]
 	drag_start = point
-	var base: Dictionary = motion.sample(motion.play_time).get(selected_part, {})
-	var field := _transform_field()
-	var current: Vector3 = MotionRig.from_array(base.get(field, [0.0, 0.0, 0.0]))
-	drag_value = current[drag_axis]
-	if active_transform == "回転":
-		drag_factor = 180.0 / (PI * maxf(1.0, float(hit["radius_pixels"])))
-	elif active_transform == "移動":
+	if moving_ik:
+		var goal: Node3D = rig.chains[selected_chain]["target"]
+		drag_value = goal.global_position[drag_axis]
 		drag_factor = motion_gizmo.translation_per_pixel(drag_axis)
 	else:
-		drag_factor = 0.013
+		var base: Dictionary = motion.sample(motion.play_time).get(selected_part, {})
+		var field := _transform_field()
+		var current: Vector3 = MotionRig.from_array(base.get(field, [0.0, 0.0, 0.0]))
+		drag_value = current[drag_axis]
+		if active_transform == "回転":
+			drag_factor = 180.0 / (PI * maxf(1.0, float(hit["radius_pixels"])))
+		elif active_transform == "移動":
+			drag_factor = motion_gizmo.translation_per_pixel(drag_axis)
+		else:
+			drag_factor = 0.013
 	playing = false
 	play_button.text = "▶ 再生"
 	motion.record_undo()
@@ -1316,6 +1335,15 @@ func _transform_field() -> String:
 func _drag_transform(point: Vector2) -> void:
 	var delta: Vector2 = point - drag_start
 	var raw_value: float = drag_value + delta.dot(drag_tangent) * drag_factor
+	if mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
+		var goal: Node3D = rig.chains[selected_chain]["target"]
+		var pos: Vector3 = goal.global_position
+		pos[drag_axis] = clampf(raw_value, -100.0, 100.0)
+		goal.global_position = pos
+		motion.evaluate(motion.play_time)
+		_update_gizmo()
+		_note("IK目標　%s軸：%.2fm" % [["X", "Y", "Z"][drag_axis], pos[drag_axis]])
+		return
 	var field := _transform_field()
 	if field == "scale":
 		raw_value = clampf(raw_value, 0.02, 30.0)
@@ -1341,6 +1369,7 @@ func _pick_from_screen(position: Vector2) -> void:
 				dragging_object = true
 				motion.record_undo()
 				_refresh_inspector()
+				_update_gizmo()
 				return
 	var origin := camera.project_ray_origin(position)
 	var direction := camera.project_ray_normal(position)
