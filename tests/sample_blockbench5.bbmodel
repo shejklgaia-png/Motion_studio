@@ -1,0 +1,188 @@
+{
+  "meta": {
+    "format_version": "5.0",
+    "model_format": "free",
+    "box_uv": false
+  },
+  "name": "Motion Studio import test",
+  "resolution": {
+    "width": 16,
+    "height": 16
+  },
+  "groups": [
+    {
+      "uuid": "test-group",
+      "name": "脚",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "outliner": [
+    {
+      "uuid": "test-group",
+      "children": [
+        "test-mesh",
+        "test-cube"
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "uuid": "test-mesh",
+      "type": "mesh",
+      "name": "自由形状",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "vertices": {
+        "a": [
+          0,
+          0,
+          0
+        ],
+        "b": [
+          16,
+          0,
+          0
+        ],
+        "c": [
+          16,
+          16,
+          0
+        ],
+        "d": [
+          0,
+          16,
+          0
+        ]
+      },
+      "faces": {
+        "f": {
+          "vertices": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "uv": {
+            "a": [
+              0,
+              0
+            ],
+            "b": [
+              16,
+              0
+            ],
+            "c": [
+              16,
+              16
+            ],
+            "d": [
+              0,
+              16
+            ]
+          }
+        }
+      }
+    },
+    {
+      "uuid": "test-cube",
+      "type": "cube",
+      "name": "箱",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "from": [
+        -8,
+        -8,
+        -8
+      ],
+      "to": [
+        8,
+        8,
+        8
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ]
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ]
+        }
+      }
+    }
+  ],
+  "textures": [],
+  "animations": [
+    {
+      "name": "足の回転テスト",
+      "length": 1,
+      "snapping": 24,
+      "loop": "once",
+      "animators": {
+        "test-group": {
+          "name": "脚",
+          "type": "bone",
+          "keyframes": [
+            {
+              "channel": "rotation",
+              "time": 0,
+              "data_points": [
+                {
+                  "x": "0",
+                  "y": "0",
+                  "z": "0"
+                }
+              ],
+              "interpolation": "linear"
+            },
+            {
+              "channel": "rotation",
+              "time": 1,
+              "data_points": [
+                {
+                  "x": "0",
+                  "y": "0",
+                  "z": "40"
+                }
+              ],
+              "interpolation": "linear"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
