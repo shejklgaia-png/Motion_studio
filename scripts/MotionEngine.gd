@@ -11,11 +11,17 @@ var play_time: float = 0.0
 var warnings: Array = []
 var history: Array[String] = []
 var future: Array[String] = []
+# Original non-baked settings and keyframes are retained for later restoration.
+var bake_source: Dictionary = {}
+var bake_report: Dictionary = {}
+const MAX_BAKE_FRAMES := 3601
 const MAX_UNDO := 50
 
 func setup(model: MotionRig) -> void:
 	rig = model
 	constraints.clear()
+	bake_source.clear()
+	bake_report.clear()
 	frames.clear()
 	frames.append({"time": 0.0, "poses": rig.rest.duplicate(true)})
 	frames.append({"time": duration, "poses": rig.rest.duplicate(true)})
@@ -72,6 +78,8 @@ func load_bb_animation(index: int) -> String:
 	duration = maxf(0.1, maxf(float(animation.get("length", 0.0)), latest))
 	fps = clampi(int(animation.get("snapping", 24)), 24, 60)
 	constraints.clear()
+	bake_source.clear()
+	bake_report.clear()
 	history.clear()
 	future.clear()
 	frames.clear()
@@ -198,6 +206,88 @@ func evaluate(at_time: float) -> void:
 		if chain.get("enabled", false) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
 			_solve_chain(chain)
 	warnings = diagnose()
+
+# Capture every editable local joint transform after FK, constraints and IK.
+# This is an explicit in-place conversion of the timeline, not merely a .tres export.
+# The source is backed up, so users can restore the original animation and IK setup.
+# For surfaces/obstacles this does not bake collision or physics responses.
+func bake_ik_fk(target_fps: int = 60) -> Dictionary:
+	if rig == null or rig.parts.is_empty() or frames.is_empty():
+		return {"ok": false, "message": "モデルかキーフレームがありません"}
+	if target_fps != 30 and target_fps != 60:
+		return {"ok": false, "message": "ベイクは30fpsまたは60fpsを選択してください"}
+	var frame_count: int = int(ceil(duration * float(target_fps))) + 1
+	if frame_count > MAX_BAKE_FRAMES:
+		return {"ok": false, "message": "最大3601フレームです。再生時間かfpsを減らしてください"}
+	record_undo()
+	var source: Dictionary = snapshot()
+	source.erase("bake_source")
+	source.erase("bake_report")
+	# Keep the first non-baked source when re-baking existing output.
+	if bake_source.is_empty():
+		bake_source = source.duplicate(true)
+	var return_time: float = play_time
+	var generated: Array = []
+	var times: Array[float] = []
+	var reference_midpoints: Array = []
+	var interval: int = maxi(1, int(ceil(float(frame_count - 1) / 120.0)))
+	for index in range(frame_count):
+		var t: float = minf(duration, float(index) / float(target_fps))
+		if index == frame_count - 1:
+			t = duration
+		evaluate(t)
+		var poses: Dictionary = {}
+		for name in rig.parts.keys():
+			poses[name] = MotionRig.pose_of(rig.parts[name])
+		generated.append({"time": t, "poses": poses})
+		times.append(t)
+		# Verify points between keys, where baking approximation may diverge.
+		if index > 0 and index % interval == 0:
+			var midpoint: float = 0.5 * (times[index - 1] + t)
+			if midpoint > times[index - 1] and midpoint < t:
+				evaluate(midpoint)
+				var reference: Dictionary = {}
+				for name in rig.parts.keys():
+					reference[name] = MotionRig.pose_of(rig.parts[name])
+				reference_midpoints.append({"time": midpoint, "poses": reference})
+	frames = generated
+	fps = target_fps
+	# Baked motion no longer requires per-frame IK or active constraints.
+	for chain in rig.chains:
+		chain["enabled"] = false
+	for name in constraints.keys():
+		constraints[name]["enabled"] = false
+	var worst_position: float = 0.0
+	var worst_rotation: float = 0.0
+	var worst_scale: float = 0.0
+	for reference in reference_midpoints:
+		var time: float = float(reference["time"])
+		evaluate(time)
+		for name in rig.parts.keys():
+			var original: Dictionary = reference["poses"][name]
+			var node: Node3D = rig.parts[name]
+			var source_position: Vector3 = MotionRig.from_array(original["position"])
+			var source_rotation: Vector3 = MotionRig.from_array(original["rotation"])
+			var source_scale: Vector3 = MotionRig.from_array(original["scale"])
+			worst_position = maxf(worst_position, node.position.distance_to(source_position))
+			var source_quat := Basis.from_euler(Vector3(
+				deg_to_rad(source_rotation.x), deg_to_rad(source_rotation.y), deg_to_rad(source_rotation.z)), node.rotation_order).get_rotation_quaternion()
+			worst_rotation = maxf(worst_rotation, rad_to_deg(node.quaternion.angle_to(source_quat)))
+			worst_scale = maxf(worst_scale, node.scale.distance_to(source_scale))
+	bake_report = {"fps": target_fps, "frame_count": generated.size(),
+		"max_position_error_m": worst_position, "max_rotation_error_deg": worst_rotation,
+		"max_scale_error": worst_scale, "checked_midpoints": reference_midpoints.size()}
+	evaluate(return_time)
+	return {"ok": true, "message": "ベイク完了：%dフレーム（%dfps）。IK・制約計算は停止しました" % [generated.size(), target_fps],
+		"report": bake_report.duplicate(true)}
+
+func restore_bake_source() -> bool:
+	if bake_source.is_empty():
+		return false
+	record_undo()
+	var original: Dictionary = bake_source.duplicate(true)
+	restore(original)
+	return true
 
 func default_constraint() -> Dictionary:
 	return {"enabled": true, "weight": 1.0, "start": 0.0, "finish": duration,
@@ -391,13 +481,16 @@ func snapshot() -> Dictionary:
 	return {"format": "motion-studio-v1", "source": rig.imported_source,
 		"duration": duration, "fps": fps, "time": play_time,
 		"frames": frames.duplicate(true), "constraints": constraints.duplicate(true),
-		"chains": chain_info, "obstacles": obstacle_info}
+		"chains": chain_info, "obstacles": obstacle_info,
+		"bake_source": bake_source.duplicate(true), "bake_report": bake_report.duplicate(true)}
 
 func restore(data: Dictionary) -> void:
 	duration = float(data.get("duration", 3.0))
 	fps = int(data.get("fps", 60))
 	frames = data.get("frames", []).duplicate(true)
 	constraints = data.get("constraints", {}).duplicate(true)
+	bake_source = data.get("bake_source", {}).duplicate(true)
+	bake_report = data.get("bake_report", {}).duplicate(true)
 	rig.clear_test_objects()
 	for item in data.get("obstacles", []):
 		var index: int = rig.add_test_object(str(item.get("kind", "箱")), MotionRig.from_array(item.get("position", [0, 0.5, 0])))
