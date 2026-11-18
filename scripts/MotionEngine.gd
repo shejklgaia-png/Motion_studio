@@ -1,0 +1,373 @@
+extends RefCounted
+class_name MotionEngine
+
+# Non-destructive timeline: sampled FK pose -> per-part limits -> IK -> diagnostics.
+var rig: MotionRig
+var duration: float = 3.0
+var fps: int = 60
+var frames: Array = []
+var constraints: Dictionary = {}
+var play_time: float = 0.0
+var warnings: Array = []
+var history: Array[String] = []
+var future: Array[String] = []
+const MAX_UNDO := 50
+
+func setup(model: MotionRig) -> void:
+	rig = model
+	constraints.clear()
+	frames.clear()
+	frames.append({"time": 0.0, "poses": rig.rest.duplicate(true)})
+	frames.append({"time": duration, "poses": rig.rest.duplicate(true)})
+	history.clear()
+	future.clear()
+	play_time = 0.0
+	evaluate(0.0)
+
+func add_sample_animation() -> void:
+	if not rig.parts.has("前左上肢"):
+		return
+	var sample: Dictionary = rig.rest.duplicate(true)
+	var lifted: Dictionary = sample["前左上肢"].duplicate(true)
+	lifted["rotation"] = [0.0, 0.0, -26.0]
+	sample["前左上肢"] = lifted
+	frames.insert(1, {"time": 0.7, "poses": sample})
+	var sample2: Dictionary = rig.rest.duplicate(true)
+	var lowered: Dictionary = sample2["前左上肢"].duplicate(true)
+	lowered["rotation"] = [0.0, 0.0, 15.0]
+	sample2["前左上肢"] = lowered
+	frames.insert(2, {"time": 1.4, "poses": sample2})
+	evaluate(0.0)
+
+func _sort_key(a: Dictionary, b: Dictionary) -> bool:
+	return float(a["time"]) < float(b["time"])
+
+func _ensure_sorted() -> void:
+	frames.sort_custom(_sort_key)
+
+func _interpolate_pose(pa: Dictionary, pb: Dictionary, weight: float) -> Dictionary:
+	var output: Dictionary = {}
+	for field in ["position", "rotation", "scale"]:
+		var av := MotionRig.from_array(pa.get(field, [0, 0, 0]))
+		var bv := MotionRig.from_array(pb.get(field, [0, 0, 0]))
+		var v := av.lerp(bv, weight)
+		if field == "rotation":
+			v = Vector3(rad_to_deg(lerp_angle(deg_to_rad(av.x), deg_to_rad(bv.x), weight)),
+				rad_to_deg(lerp_angle(deg_to_rad(av.y), deg_to_rad(bv.y), weight)),
+				rad_to_deg(lerp_angle(deg_to_rad(av.z), deg_to_rad(bv.z), weight)))
+		output[field] = MotionRig.vec3_array(v)
+	return output
+
+func sample(at_time: float) -> Dictionary:
+	if frames.is_empty():
+		return rig.rest.duplicate(true)
+	_ensure_sorted()
+	var t := clampf(at_time, 0.0, duration)
+	var left: Dictionary = frames[0]
+	var right: Dictionary = frames[frames.size() - 1]
+	for frame in frames:
+		if float(frame["time"]) <= t:
+			left = frame
+		if float(frame["time"]) >= t:
+			right = frame
+			break
+	var span: float = float(right["time"]) - float(left["time"])
+	var alpha: float = clampf((t - float(left["time"])) / span, 0.0, 1.0) if span > 0.00001 else 0.0
+	var pose_map: Dictionary = {}
+	for name in rig.parts.keys():
+		var default_pose: Dictionary = rig.rest.get(name, {})
+		var ap: Dictionary = left["poses"].get(name, default_pose)
+		var bp: Dictionary = right["poses"].get(name, default_pose)
+		pose_map[name] = _interpolate_pose(ap, bp, alpha)
+	return pose_map
+
+func evaluate(at_time: float) -> void:
+	play_time = clampf(at_time, 0.0, duration)
+	var sampled := sample(play_time)
+	for name in sampled.keys():
+		rig.set_pose(name, sampled[name])
+	for name in constraints.keys():
+		_apply_constraint(name, constraints[name])
+	for chain in rig.chains:
+		if chain.get("enabled", false) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
+			_solve_chain(chain)
+	warnings = diagnose()
+
+func default_constraint() -> Dictionary:
+	return {"enabled": true, "weight": 1.0, "start": 0.0, "finish": duration,
+		"position_min": [-10.0, -10.0, -10.0], "position_max": [10.0, 10.0, 10.0],
+		"rotation_min": [-180.0, -180.0, -180.0], "rotation_max": [180.0, 180.0, 180.0],
+		"scale_min": [0.05, 0.05, 0.05], "scale_max": [5.0, 5.0, 5.0]}
+
+func _apply_constraint(name: String, entry: Dictionary) -> void:
+	if not rig.parts.has(name) or not entry.get("enabled", true):
+		return
+	if play_time < float(entry.get("start", 0.0)) or play_time > float(entry.get("finish", duration)):
+		return
+	var weight := clampf(float(entry.get("weight", 1.0)), 0.0, 1.0)
+	var node: Node3D = rig.parts[name]
+	for field in ["position", "rotation", "scale"]:
+		var current: Vector3 = node.rotation_degrees if field == "rotation" else (node.scale if field == "scale" else node.position)
+		var mini: Vector3 = MotionRig.from_array(entry[field + "_min"])
+		var maxi: Vector3 = MotionRig.from_array(entry[field + "_max"])
+		var corrected := Vector3(clampf(current.x, mini.x, maxi.x),
+			clampf(current.y, mini.y, maxi.y), clampf(current.z, mini.z, maxi.z))
+		var blended := current.lerp(corrected, weight)
+		match field:
+			"position": node.position = blended
+			"rotation": node.rotation_degrees = blended
+			"scale": node.scale = blended
+
+func _solve_chain(chain: Dictionary) -> void:
+	var root: Node3D = rig.parts.get(chain["root"])
+	var mid: Node3D = rig.parts.get(chain["mid"])
+	var end: Node3D = rig.parts.get(chain["end"])
+	if root == null or mid == null or end == null:
+		return
+	var tip := MotionRig.from_array(chain["tip"])
+	var target: Node3D = chain["target"]
+	var weight := clampf(float(chain.get("weight", 1.0)), 0.0, 1.0)
+	if weight <= 0.0:
+		return
+	var original_root: Quaternion = root.quaternion
+	var original_mid: Quaternion = mid.quaternion
+	match chain.get("method", "CCD"):
+		"FABRIK": _solve_fabrik(root, mid, end, tip, target.global_position)
+		"2ボーン": _solve_ccd(root, mid, end, tip, target.global_position, 14)
+		_: _solve_ccd(root, mid, end, tip, target.global_position, 8)
+	root.quaternion = original_root.slerp(root.quaternion, weight)
+	mid.quaternion = original_mid.slerp(mid.quaternion, weight)
+	if constraints.has(chain["root"]):
+		_apply_constraint(chain["root"], constraints[chain["root"]])
+	if constraints.has(chain["mid"]):
+		_apply_constraint(chain["mid"], constraints[chain["mid"]])
+
+func _rotate_toward(node: Node3D, source: Vector3, dest: Vector3, max_angle: float = PI) -> void:
+	if source.length_squared() < 0.000001 or dest.length_squared() < 0.000001:
+		return
+	var a := source.normalized()
+	var b := dest.normalized()
+	var axis := a.cross(b)
+	if axis.length_squared() < 0.000001:
+		return
+	var turn := minf(acos(clampf(a.dot(b), -1.0, 1.0)), max_angle)
+	var old := node.global_transform
+	node.global_transform = Transform3D(Basis(axis.normalized(), turn) * old.basis, old.origin)
+
+func _solve_ccd(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target: Vector3, iterations: int) -> void:
+	for _iter in range(iterations):
+		if end.to_global(tip).distance_to(target) < 0.008:
+			break
+		for joint in [mid, root]:
+			var from_joint := end.to_global(tip) - joint.global_position
+			var to_target := target - joint.global_position
+			_rotate_toward(joint, from_joint, to_target, 0.35)
+
+func _solve_fabrik(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target: Vector3) -> void:
+	# Two-segment FABRIK, reconstructed as joint rotations (without changing bone lengths).
+	var p0 := root.global_position
+	var p1 := mid.global_position
+	var p2 := end.to_global(tip)
+	var l0 := p0.distance_to(p1)
+	var l1 := p1.distance_to(p2)
+	if l0 < 0.0001 or l1 < 0.0001:
+		return
+	if p0.distance_to(target) >= l0 + l1:
+		p1 = p0 + (target - p0).normalized() * l0
+		p2 = p1 + (target - p1).normalized() * l1
+	else:
+		for _i in range(12):
+			p2 = target
+			p1 = p2 + (p1 - p2).normalized() * l1
+			p0 = root.global_position
+			p1 = p0 + (p1 - p0).normalized() * l0
+			p2 = p1 + (p2 - p1).normalized() * l1
+			if p2.distance_to(target) < 0.007:
+				break
+	_rotate_toward(root, mid.global_position - root.global_position, p1 - root.global_position)
+	_rotate_toward(mid, end.to_global(tip) - mid.global_position, p2 - mid.global_position)
+
+func diagnose() -> Array:
+	var report: Array = []
+	for chain in rig.chains:
+		if not chain.get("enabled", false):
+			continue
+		if play_time < float(chain.get("start", 0.0)) or play_time > float(chain.get("finish", duration)):
+			continue
+		var end: Node3D = rig.parts.get(chain["end"])
+		var target: Node3D = chain["target"]
+		if end == null:
+			continue
+		var error := end.to_global(MotionRig.from_array(chain["tip"])).distance_to(target.global_position)
+		if error > 0.08:
+			report.append(str(chain["name"]) + "：IK目標との誤差 %.3fm" % error)
+	return report
+
+func record_undo() -> void:
+	history.append(JSON.stringify(snapshot()))
+	if history.size() > MAX_UNDO:
+		history.pop_front()
+	future.clear()
+
+func undo() -> bool:
+	if history.is_empty():
+		return false
+	future.append(JSON.stringify(snapshot()))
+	var previous := JSON.parse_string(history.pop_back())
+	if previous is Dictionary:
+		restore(previous)
+		return true
+	return false
+
+func redo() -> bool:
+	if future.is_empty():
+		return false
+	history.append(JSON.stringify(snapshot()))
+	var next := JSON.parse_string(future.pop_back())
+	if next is Dictionary:
+		restore(next)
+		return true
+	return false
+
+func set_key_component(at_time: float, part: String, field: String, axis: int, value: float) -> void:
+	if not rig.parts.has(part):
+		return
+	var t: float = snappedf(clampf(at_time, 0.0, duration), 0.001)
+	var poses: Dictionary = sample(t)
+	var entry: Dictionary = poses[part].duplicate(true)
+	var vector: Array = entry[field].duplicate()
+	vector[axis] = value
+	entry[field] = vector
+	poses[part] = entry
+	_insert_frame(t, poses)
+	evaluate(t)
+
+func capture_key(at_time: float) -> void:
+	var t: float = snappedf(clampf(at_time, 0.0, duration), 0.001)
+	var poses: Dictionary = {}
+	for name in rig.parts.keys():
+		poses[name] = MotionRig.pose_of(rig.parts[name])
+	_insert_frame(t, poses)
+	evaluate(t)
+
+func delete_key(at_time: float) -> void:
+	if frames.size() <= 2:
+		return
+	var index := -1
+	var best := 9999.0
+	for i in range(frames.size()):
+		var delta := absf(float(frames[i]["time"]) - at_time)
+		if delta < best:
+			best = delta
+			index = i
+	if index >= 0 and best < 0.04 and float(frames[index]["time"]) != 0.0 and float(frames[index]["time"]) != duration:
+		frames.remove_at(index)
+		evaluate(at_time)
+
+func _insert_frame(t: float, poses: Dictionary) -> void:
+	for i in range(frames.size()):
+		if absf(float(frames[i]["time"]) - t) < 0.0005:
+			frames[i] = {"time": t, "poses": poses}
+			return
+	frames.append({"time": t, "poses": poses})
+	_ensure_sorted()
+
+func snapshot() -> Dictionary:
+	var chain_info: Array = []
+	for chain in rig.chains:
+		var item: Dictionary = chain.duplicate(true)
+		item["target"] = MotionRig.vec3_array(chain["target"].global_position)
+		chain_info.append(item)
+	var obstacle_info: Array = []
+	for item in rig.test_objects:
+		obstacle_info.append({"kind": item["kind"], "position": MotionRig.vec3_array(item["node"].position),
+			"rotation": MotionRig.vec3_array(item["node"].rotation_degrees), "scale": MotionRig.vec3_array(item["node"].scale)})
+	return {"format": "motion-studio-v1", "source": rig.imported_source,
+		"duration": duration, "fps": fps, "time": play_time,
+		"frames": frames.duplicate(true), "constraints": constraints.duplicate(true),
+		"chains": chain_info, "obstacles": obstacle_info}
+
+func restore(data: Dictionary) -> void:
+	duration = float(data.get("duration", 3.0))
+	fps = int(data.get("fps", 60))
+	frames = data.get("frames", []).duplicate(true)
+	constraints = data.get("constraints", {}).duplicate(true)
+	rig.clear_test_objects()
+	for item in data.get("obstacles", []):
+		var index: int = rig.add_test_object(str(item.get("kind", "箱")), MotionRig.from_array(item.get("position", [0, 0.5, 0])))
+		var obstacle: Node3D = rig.test_objects[index]["node"]
+		obstacle.rotation_degrees = MotionRig.from_array(item.get("rotation", [0, 0, 0]))
+		obstacle.scale = MotionRig.from_array(item.get("scale", [1, 1, 1]))
+	for old_target in rig._target_group.get_children():
+		old_target.queue_free()
+	rig.chains.clear()
+	for chain in data.get("chains", []):
+		rig.add_chain(str(chain.get("name", "IK")), str(chain.get("root", "")), str(chain.get("mid", "")),
+			str(chain.get("end", "")), MotionRig.from_array(chain.get("tip", [0, 0, 0])), MotionRig.from_array(chain.get("target", [0, 0, 0])))
+		if rig.chains.is_empty():
+			continue
+		var latest: Dictionary = rig.chains[-1]
+		for key in ["enabled", "method", "weight", "start", "finish", "pole"]:
+			latest[key] = chain.get(key, latest.get(key))
+	evaluate(float(data.get("time", 0.0)))
+
+func save_project(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return "保存できません：" + str(FileAccess.get_open_error())
+	file.store_string(JSON.stringify(snapshot(), "  "))
+	file.close()
+	return "保存しました：" + path
+
+func load_project(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return "読み込めません"
+	var data: Variant = JSON.parse_string(file.get_as_text())
+	if not (data is Dictionary) or data.get("format", "") != "motion-studio-v1":
+		return "Motion Studio形式ではありません"
+	var source: String = str(data.get("source", "sample"))
+	if source == "sample":
+		rig.create_sample()
+	elif source.to_lower().ends_with(".bbmodel"):
+		var issue := rig.load_bbmodel(source)
+		if issue != "":
+			return issue
+	else:
+		var issue := rig.load_gltf(source)
+		if issue != "":
+			return issue
+	restore(data)
+	history.clear()
+	future.clear()
+	return "読み込みました：" + path
+
+func export_animation_tres(path: String) -> String:
+	# Creates a standard Godot Animation resource. IK is sampled/baked to frames.
+	var anim := Animation.new()
+	anim.length = duration
+	anim.step = 1.0 / float(fps)
+	for name in rig.parts.keys():
+		var node: Node3D = rig.parts[name]
+		var relative: NodePath = rig.get_path_to(node)
+		for kind in ["position", "rotation", "scale"]:
+			var type_id: int = Animation.TYPE_POSITION_3D
+			if kind == "rotation": type_id = Animation.TYPE_ROTATION_3D
+			if kind == "scale": type_id = Animation.TYPE_SCALE_3D
+			var idx := anim.add_track(type_id)
+			anim.track_set_path(idx, relative)
+			for frame_index in range(int(round(duration * float(fps))) + 1):
+				var t := minf(float(frame_index) / float(fps), duration)
+				evaluate(t)
+				var p: Dictionary = MotionRig.pose_of(node)
+				if kind == "position":
+					anim.position_track_insert_key(idx, t, MotionRig.from_array(p["position"]))
+				elif kind == "rotation":
+					anim.rotation_track_insert_key(idx, t, node.quaternion)
+				else:
+					anim.scale_track_insert_key(idx, t, MotionRig.from_array(p["scale"]))
+	var result: Error = ResourceSaver.save(anim, path)
+	evaluate(play_time)
+	if result != OK:
+		return "アニメーション出力失敗：" + str(result)
+	return "Godotアニメーションを出力しました：" + path
