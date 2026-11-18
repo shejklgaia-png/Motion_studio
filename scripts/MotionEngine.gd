@@ -542,31 +542,35 @@ func load_project(path: String) -> String:
 	return "読み込みました：" + path
 
 func export_animation_tres(path: String) -> String:
-	# Creates a standard Godot Animation resource. IK is sampled/baked to frames.
+	# All evaluated local FK transforms are output once per frame.
+	# With an already-baked timeline this emits keys without doing runtime IK.
+	var saved_time: float = play_time
 	var anim := Animation.new()
 	anim.length = duration
 	anim.step = 1.0 / float(fps)
+	var tracks: Array = []
 	for name in rig.parts.keys():
-		var node: Node3D = rig.parts[name]
-		var relative: NodePath = rig.get_path_to(node)
-		for kind in ["position", "rotation", "scale"]:
-			var type_id: int = Animation.TYPE_POSITION_3D
-			if kind == "rotation": type_id = Animation.TYPE_ROTATION_3D
-			if kind == "scale": type_id = Animation.TYPE_SCALE_3D
-			var idx := anim.add_track(type_id)
-			anim.track_set_path(idx, relative)
-			for frame_index in range(int(round(duration * float(fps))) + 1):
-				var t := minf(float(frame_index) / float(fps), duration)
-				evaluate(t)
-				var p: Dictionary = MotionRig.pose_of(node)
-				if kind == "position":
-					anim.position_track_insert_key(idx, t, MotionRig.from_array(p["position"]))
-				elif kind == "rotation":
-					anim.rotation_track_insert_key(idx, t, node.quaternion)
-				else:
-					anim.scale_track_insert_key(idx, t, MotionRig.from_array(p["scale"]))
+		var joint: Node3D = rig.parts[name]
+		var node_path: NodePath = rig.get_path_to(joint)
+		var pos_track: int = anim.add_track(Animation.TYPE_POSITION_3D)
+		var rot_track: int = anim.add_track(Animation.TYPE_ROTATION_3D)
+		var scale_track: int = anim.add_track(Animation.TYPE_SCALE_3D)
+		for idx in [pos_track, rot_track, scale_track]:
+			anim.track_set_path(idx, node_path)
+		tracks.append({"joint": joint, "position": pos_track, "rotation": rot_track, "scale": scale_track})
+	var frame_count: int = int(ceil(duration * float(fps))) + 1
+	for frame_index in range(frame_count):
+		var t: float = minf(float(frame_index) / float(fps), duration)
+		if frame_index == frame_count - 1:
+			t = duration
+		evaluate(t)
+		for item in tracks:
+			var joint: Node3D = item["joint"]
+			anim.position_track_insert_key(int(item["position"]), t, joint.position)
+			anim.rotation_track_insert_key(int(item["rotation"]), t, joint.quaternion)
+			anim.scale_track_insert_key(int(item["scale"]), t, joint.scale)
+	evaluate(saved_time)
 	var result: Error = ResourceSaver.save(anim, path)
-	evaluate(play_time)
 	if result != OK:
 		return "アニメーション出力失敗：" + str(result)
 	return "Godotアニメーションを出力しました：" + path
