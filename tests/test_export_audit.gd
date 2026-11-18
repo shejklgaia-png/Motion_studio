@@ -1,5 +1,5 @@
 extends SceneTree
-## End-to-end regression for Movie Studio's real IK/FK bake -> .tres export.
+## End-to-end regression for Motion Studio's real IK/FK bake -> .tres export.
 ## A passing result validates local tracks at sampled times, not Android device UX.
 
 func _initialize() -> void:
@@ -16,12 +16,24 @@ func _run() -> void:
 	if not bool(baked.get("ok", false)):
 		_fail("Failed to bake sample FK: " + str(baked))
 		return
+	engine.evaluate(0.73)
+	var preserved_time: float = engine.play_time
 	var path := "user://motion_export_audit.tres"
 	var message := engine.export_animation_tres(path)
 	if not message.begins_with("Godotアニメーションを出力"):
 		_fail("Failed to export .tres: " + message)
 		return
-	var animation := ResourceLoader.load(path) as Animation
+	var summary: Dictionary = engine.last_export_report
+	if not bool(summary.get("ok", false)) or not bool(summary.get("reloaded", false)):
+		_fail("Saved .tres failed keyframe parity audit: " + str(summary))
+		return
+	if int(summary.get("key_samples", 0)) < 3 or int(summary.get("mid_samples", 0)) < 2:
+		_fail("Export audit did not sample keyframes and between-key interpolation")
+		return
+	if absf(engine.play_time - preserved_time) > 0.00001:
+		_fail("Export audit did not restore the editor's playback time")
+		return
+	var animation := ResourceLoader.load(path, "Animation", ResourceLoader.CACHE_MODE_IGNORE) as Animation
 	if animation == null:
 		_fail("Godot cannot re-import the exported .tres animation")
 		return
@@ -46,7 +58,29 @@ func _run() -> void:
 	if bool(mismatch.get("ok", true)) or (mismatch.get("errors", []) as Array).is_empty():
 		_fail("Audit failed to reject a shifted local transform")
 		return
-	print("EXPORT AUDIT PASS: imported .tres and compared %d baked channels, mismatch detected" % examined)
+	# The whole-export audit must catch a corrupted saved position key.
+	var corrupted: Animation = animation.duplicate(true) as Animation
+	var position_track := -1
+	for track in range(corrupted.get_track_count()):
+		if corrupted.track_get_type(track) == Animation.TYPE_POSITION_3D:
+			position_track = track
+			break
+	if position_track < 0:
+		_fail("Missing position track in exported animation")
+		return
+	var first_key: Vector3 = corrupted.track_get_key_value(position_track, 0)
+	corrupted.track_set_key_value(position_track, 0, first_key + Vector3(0.3, 0.0, 0.0))
+	var bad_report: Dictionary = MotionExportAudit.audit_export(engine, corrupted)
+	if bool(bad_report.get("ok", true)) or (bad_report.get("errors", []) as Array).is_empty():
+		_fail("Keyframe parity audit accepted a corrupted position track")
+		return
+	var missing: Animation = animation.duplicate(true) as Animation
+	missing.remove_track(position_track)
+	var missing_report: Dictionary = MotionExportAudit.audit_export(engine, missing)
+	if bool(missing_report.get("ok", true)):
+		_fail("Export audit accepted an incomplete joint track set")
+		return
+	print("EXPORT AUDIT PASS: imported .tres, compared %d channels, detected corruption and missing tracks" % examined)
 	quit(0)
 
 func _fail(message: String) -> void:
