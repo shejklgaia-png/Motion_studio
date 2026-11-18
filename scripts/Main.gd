@@ -1,6 +1,7 @@
 extends Control
 
 const MODES := ["階層", "モーション", "IK", "制約", "接触", "診断", "ベイク"]
+const ADVANCED_MODES := ["制約", "接触", "診断", "ベイク"]
 var rig: MotionRig
 var motion: MotionEngine
 var stage: Node3D
@@ -37,6 +38,12 @@ var message_label: Label
 var part_picker: OptionButton
 var mode_picker: OptionButton
 var mode_buttons: Dictionary = {}
+var advanced_menu: MenuButton
+var editor_title: Label
+var action_hint: Label
+var key_scroll: ScrollContainer
+var key_list_toggle: Button
+var selection_bar: VBoxContainer
 var editor_body: VBoxContainer
 var editor_scroll: ScrollContainer
 var editor_toggle: Button
@@ -73,6 +80,7 @@ func _ready() -> void:
 	_refresh_key_buttons()
 	_update_timeline()
 	_update_gizmo()
+	_refresh_action_hint()
 	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
 	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
 		call_deferred("_show_help")
@@ -177,7 +185,7 @@ func _build_interface() -> void:
 	play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(play_button, false, true)
 	var more := MenuButton.new()
-	more.text = "その他 ▾"
+	more.text = "操作 ▾"
 	more.custom_minimum_size.y = 44
 	more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(more)
@@ -246,14 +254,16 @@ func _build_interface() -> void:
 	pan_button.custom_minimum_size = Vector2(79, 44)
 	_style_button(pan_button)
 
-	var guide := _add_text(layout, "2本指でズーム　／　上のタブで階層・モーション・IKを切替")
-	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
-	guide.clip_text = true
-	guide.add_theme_font_size_override("font_size", 12)
+	action_hint = _add_text(layout, "① ファイルから読み込む　② 動きを選ぶ　③ 部位を選んで編集")
+	action_hint.autowrap_mode = TextServer.AUTOWRAP_OFF
+	action_hint.clip_text = true
+	action_hint.add_theme_font_size_override("font_size", 13)
+	action_hint.add_theme_color_override("font_color", Color("b6d6f4"))
+	selection_bar = _panel(layout, Color("292f3b"))
 
 	var timeline := _panel(layout, Color("232936"))
 	var controls := _row(timeline)
-	var track_label := _add_text(controls, "TIMELINE")
+	var track_label := _add_text(controls, "動きの時間")
 	track_label.add_theme_font_size_override("font_size", 15)
 	time_label = _add_text(controls, "0.00秒")
 	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -281,7 +291,11 @@ func _build_interface() -> void:
 	var remove_key := _make_button("－ キー", _remove_key, transport)
 	remove_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(remove_key)
-	var key_scroll := ScrollContainer.new()
+	key_list_toggle = _make_button("すべてのキーを見る ▼", _toggle_key_list, timeline)
+	_style_button(key_list_toggle)
+	key_list_toggle.custom_minimum_size.y = 36
+	key_scroll = ScrollContainer.new()
+	key_scroll.visible = false
 	key_scroll.custom_minimum_size.y = 34
 	key_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	key_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -291,7 +305,7 @@ func _build_interface() -> void:
 	# The mode tabs remain visible; the large inspector is collapsible.
 	var editor := _panel(layout, Color("272d3a"))
 	var editor_head := _row(editor)
-	var editor_title := _add_text(editor_head, "BONE / PROPERTIES", true)
+	editor_title = _add_text(editor_head, "編集：モーション", true)
 	editor_title.add_theme_font_size_override("font_size", 15)
 	editor_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	editor_toggle = _make_button("閉じる ▲", _toggle_editor, editor_head)
@@ -306,21 +320,42 @@ func _build_interface() -> void:
 	# Blockbench places mode selection immediately above the 3D viewport.
 	layout.move_child(tabs_scroll, 2)
 	var tabs := _row(tabs_scroll)
-	for item in MODES:
-		var new_mode: String = item
-		var caption: String = str(item)
-		var tab := _make_button(caption, func(): _change_mode(new_mode), tabs)
-		tab.custom_minimum_size.x = 84 if item != "モーション" else 98
+	for item in ["階層", "モーション", "IK"]:
+		var current_mode: String = item
+		var caption: String = {"階層":"① 部位", "モーション":"② 動き編集", "IK":"③ IK"}[item]
+		var tab := _make_button(caption, func(): _change_mode(current_mode), tabs)
+		tab.custom_minimum_size.x = 85 if item != "モーション" else 112
+		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mode_buttons[item] = tab
 		_style_button(tab, item == mode)
+	advanced_menu = MenuButton.new()
+	advanced_menu.text = "詳細機能 ▾"
+	advanced_menu.custom_minimum_size = Vector2(113, 44)
+	advanced_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tabs.add_child(advanced_menu)
+	_style_button(advanced_menu)
+	var tools_popup: PopupMenu = advanced_menu.get_popup()
+	for index in range(ADVANCED_MODES.size()):
+		var tool_name: String = ADVANCED_MODES[index]
+		var display_name: String = {
+			"制約":"関節の可動域（制約）",
+			"接触":"床・物体への接触",
+			"診断":"動きのチェック",
+			"ベイク":"IK/FKをキーフレーム化"
+		}[tool_name]
+		tools_popup.add_item(display_name, index)
+		mode_buttons[tool_name] = advanced_menu
+	tools_popup.id_pressed.connect(func(id: int):
+		if id >= 0 and id < ADVANCED_MODES.size():
+			_change_mode(ADVANCED_MODES[id]))
 	editor_body = VBoxContainer.new()
 	editor_body.add_theme_constant_override("separation", 5)
 	editor.add_child(editor_body)
-	var selectors := _row(editor_body)
+	var selectors := _row(selection_bar)
 	var part_col := VBoxContainer.new()
 	part_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(part_col)
-	var part_text := _add_text(part_col, "BONE / 部位")
+	var part_text := _add_text(part_col, "② 動かす部位")
 	part_text.add_theme_font_size_override("font_size", 13)
 	part_picker = OptionButton.new()
 	part_picker.fit_to_longest_item = false
@@ -337,7 +372,7 @@ func _build_interface() -> void:
 	var anim_col := VBoxContainer.new()
 	anim_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(anim_col)
-	var anim_text := _add_text(anim_col, "ANIMATIONS")
+	var anim_text := _add_text(anim_col, "① モーション選択")
 	anim_text.add_theme_font_size_override("font_size", 13)
 	animation_picker = OptionButton.new()
 	animation_picker.fit_to_longest_item = false
@@ -354,8 +389,9 @@ func _build_interface() -> void:
 			var result: String = motion.load_bb_animation(index - 1)
 			_after_model_change(result))
 	anim_col.add_child(animation_picker)
+	selectors.move_child(anim_col, 0)
 	editor_scroll = ScrollContainer.new()
-	editor_scroll.custom_minimum_size.y = 140
+	editor_scroll.custom_minimum_size.y = 130
 	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -420,11 +456,36 @@ func _change_mode(new_mode: String) -> void:
 	mode = new_mode
 	editor_body.show()
 	editor_toggle.text = "閉じる ▲"
-	for name in mode_buttons:
+	for name in ["階層", "モーション", "IK"]:
 		_style_button(mode_buttons[name], name == mode)
+	_style_button(advanced_menu, mode in ADVANCED_MODES)
+	advanced_menu.text = "詳細：%s ▾" % mode if mode in ADVANCED_MODES else "詳細機能 ▾"
+	editor_title.text = "編集：%s" % mode
 	_refresh_inspector()
+	_refresh_action_hint()
 	_update_gizmo()
 	editor_scroll.scroll_vertical = 0
+
+func _toggle_key_list() -> void:
+	key_scroll.visible = not key_scroll.visible
+	key_list_toggle.text = "キー一覧を閉じる ▲" if key_scroll.visible else "すべてのキーを見る ▼"
+
+func _refresh_action_hint() -> void:
+	if action_hint == null:
+		return
+	var descriptions: Dictionary = {
+		"階層": "部位をタップして選択 →「動き編集」で回転を変更",
+		"モーション": "黄色い◆で時間を選択 → 3D画面で関節を回転",
+		"IK": "足先の目標点を選び、ドラッグして位置を設定",
+		"制約": "関節を選び、動かせる角度や範囲を設定",
+		"接触": "床・箱・球との接触を確認",
+		"診断": "エラーと接地状態を確認",
+		"ベイク": "IKを計算した動きを普通のキーに変換"
+	}
+	if rig == null or rig.imported_source == "sample":
+		action_hint.text = "ファイル ▾ でbbmodelを読込（サンプルでも試せます）"
+	else:
+		action_hint.text = str(descriptions.get(mode, "時間と部位を選んで編集"))
 
 func _toggle_editor() -> void:
 	editor_body.visible = not editor_body.visible
@@ -644,6 +705,7 @@ func _after_model_change(note: String) -> void:
 	_refresh_key_buttons()
 	_update_timeline()
 	_update_gizmo()
+	_refresh_action_hint()
 	_note(note)
 
 func _refresh_part_picker() -> void:
@@ -661,6 +723,7 @@ func _refresh_part_picker() -> void:
 	_update_gizmo()
 	_update_selection_badge()
 	_refresh_timeline_view()
+	_refresh_action_hint()
 
 func _update_selection_badge() -> void:
 	if selection_badge != null:
