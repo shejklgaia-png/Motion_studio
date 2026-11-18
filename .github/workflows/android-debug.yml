@@ -92,6 +92,10 @@ jobs:
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_contact_roadmap.gd
 
+      - name: Test touch UI for contact anchors
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_contact_ui.gd
+
       - name: Export Android debug APK
         env:
           GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
