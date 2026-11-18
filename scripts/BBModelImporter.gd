@@ -198,11 +198,14 @@ func _write_face(surfaces: Dictionary, pts: Array, uv: Array, texkey: String) ->
 		var a: Vector3 = pts[0]
 		var b: Vector3 = pts[i]
 		var c: Vector3 = pts[i + 1]
-		if (b - a).cross(c - a).length_squared() < 0.0000000001:
+		var normal: Vector3 = (b - a).cross(c - a)
+		if normal.length_squared() < 0.0000000001:
 			continue
+		normal = normal.normalized()
 		for k in indices:
 			var t: Vector2 = uv[k]
 			tool.set_uv(Vector2(t.x / size.x, t.y / size.y))
+			tool.set_normal(normal) # Unshared per-triangle normal: hard edges, no smoothing.
 			tool.add_vertex(pts[k])
 			surface["count"] = int(surface["count"]) + 1
 
@@ -213,12 +216,12 @@ func _finish(surfaces: Dictionary, palette_idx: int) -> ArrayMesh:
 		var tool: SurfaceTool = surface["tool"]
 		if int(surface["count"]) == 0:
 			continue
-		tool.generate_normals()
 		tool.commit(mesh)
 		var material := StandardMaterial3D.new()
 		material.albedo_color = Color(PALETTE[absi(palette_idx) % PALETTE.size()])
-		material.metallic = 0.1
-		material.roughness = 0.7
+		material.metallic = 0.0
+		material.roughness = 1.0
+		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		material.cull_mode = BaseMaterial3D.CULL_DISABLED
 		if textures.has(key) and textures[key] != null:
 			material.albedo_color = Color.WHITE
