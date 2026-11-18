@@ -58,6 +58,8 @@ var help_popup: AcceptDialog
 var selected_part: String = "胴体"
 var selected_chain: int = 0
 var selected_test: int = -1
+var selected_contact: int = -1
+var contact_markers: Array[MeshInstance3D] = []
 var mode: String = "モーション"
 var playing: bool = false
 var playback_speed: float = 1.0
@@ -834,6 +836,7 @@ func _seek_to(value: float) -> void:
 	motion.evaluate(value)
 	_update_timeline()
 	_update_gizmo()
+	_refresh_contact_markers()
 	if show_original:
 		_show_raw_pose()
 
@@ -1106,6 +1109,8 @@ func _inspector_ik() -> void:
 	_number_field("開始 (秒)", chain["start"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("start", v))
 	_number_field("終了 (秒)", chain["finish"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("finish", v))
 	_add_text(inspector, "目標の赤・緑・青の矢印を指でドラッグすると、X・Y・Z軸を個別に動かせます。")
+	var lock_button := _make_button("足先固定・滑走の設定へ", func(): _change_mode("接触"), inspector)
+	_style_button(lock_button, false, true)
 
 func _add_ik_chain() -> void:
 	var names: Array = rig.parts.keys()
@@ -1167,7 +1172,123 @@ func _inspector_constraints() -> void:
 		motion.evaluate(motion.play_time))
 	_add_text(inspector, "※ 同じ軸の下限が上限を超える設定は避けてください。")
 
+func _new_contact(mode_name: String) -> void:
+	var object_idx: int = selected_test if mode_name == "obstacle" else -1
+	if not motion.add_contact(selected_chain, mode_name, object_idx):
+		_note("固定できません：IKまたは参照物体を選択してください")
+		return
+	selected_contact = motion.contact_constraints.size() - 1
+	_after_model_change("足先固定を作成しました。黄色い球が固定位置です")
+
+func _edit_contact(index: int, key: String, value: Variant) -> void:
+	if index < 0 or index >= motion.contact_constraints.size():
+		return
+	motion.record_undo()
+	motion.contact_constraints[index][key] = value
+	motion.evaluate(motion.play_time)
+	_refresh_contact_markers()
+	_update_history_buttons()
+
+func _delete_contact() -> void:
+	if selected_contact < 0 or selected_contact >= motion.contact_constraints.size():
+		return
+	motion.record_undo()
+	motion.contact_constraints.remove_at(selected_contact)
+	selected_contact = mini(selected_contact, motion.contact_constraints.size() - 1)
+	motion.evaluate(motion.play_time)
+	_refresh_contact_markers()
+	_refresh_inspector()
+
+func _refresh_contact_markers() -> void:
+	if stage == null or motion == null:
+		return
+	while contact_markers.size() < motion.contact_constraints.size():
+		var marker := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = 0.09
+		sphere.height = 0.18
+		marker.mesh = sphere
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color("ffe184")
+		mat.no_depth_test = true
+		marker.material_override = mat
+		stage.add_child(marker)
+		contact_markers.append(marker)
+	for i in range(contact_markers.size()):
+		var marker: MeshInstance3D = contact_markers[i]
+		marker.visible = false
+		if i >= motion.contact_constraints.size():
+			continue
+		var contact: Dictionary = motion.contact_constraints[i]
+		var result: Dictionary = motion.get_contact_goal(int(contact.get("chain_index", -1)), motion.play_time)
+		if mode in ["接触", "IK", "診断"] and bool(result.get("active", false)) and int(result.get("contact_index", -1)) == i:
+			marker.visible = true
+			marker.global_position = result["position"]
+
+func _inspector_contact_locks() -> void:
+	_add_text(inspector, "足先固定・滑走（IK/FKベイク対応）", true)
+	_add_text(inspector, "床・空間・物体に足先を固定し、摩擦と移動速度を設定します。")
+	if rig.chains.is_empty():
+		_add_text(inspector, "先に「IK設定」でチェーンを作成してください。")
+		return
+	var chain_row := _row(inspector)
+	_add_text(chain_row, "IKの足先")
+	var chains := OptionButton.new()
+	chains.fit_to_longest_item = false
+	chains.clip_text = true
+	chains.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for chain in rig.chains:
+		chains.add_item(str(chain["name"]))
+	selected_chain = clampi(selected_chain, 0, rig.chains.size() - 1)
+	chains.select(selected_chain)
+	chains.item_selected.connect(func(i: int): selected_chain = i)
+	chain_row.add_child(chains)
+	var actions := _row(inspector)
+	for item in [["床に固定", "floor"], ["空間に固定", "world"], ["物体に固定", "obstacle"]]:
+		var kind: String = str(item[1])
+		var btn := _make_button(str(item[0]), func(): _new_contact(kind), actions)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.disabled = kind == "obstacle" and rig.test_objects.is_empty()
+		_style_button(btn, kind == "floor")
+	if motion.contact_constraints.is_empty():
+		_add_text(inspector, "固定点はありません。足先を選んで固定方法を押してください。")
+		return
+	var control_row := _row(inspector)
+	var options := OptionButton.new()
+	options.fit_to_longest_item = false
+	options.clip_text = true
+	options.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for i in range(motion.contact_constraints.size()):
+		var item: Dictionary = motion.contact_constraints[i]
+		var k: int = int(item.get("chain_index", -1))
+		var name: String = str(rig.chains[k]["name"]) if k >= 0 and k < rig.chains.size() else "不明"
+		options.add_item("%d: %s" % [i + 1, name])
+	selected_contact = clampi(selected_contact, 0, motion.contact_constraints.size() - 1)
+	options.select(selected_contact)
+	options.item_selected.connect(func(i: int):
+		selected_contact = i
+		_refresh_inspector())
+	control_row.add_child(options)
+	var remove := _make_button("削除", _delete_contact, control_row)
+	_style_button(remove)
+	var idx: int = selected_contact
+	var entry: Dictionary = motion.contact_constraints[idx]
+	_check("固定を有効にする", bool(entry.get("enabled", true)), func(v: bool): _edit_contact(idx, "enabled", v))
+	for spec in [["weight", "固定強度", 0.0, 1.0], ["friction", "摩擦（1=固定）", 0.0, 1.0],
+		["start", "開始 秒", 0.0, motion.duration], ["finish", "終了 秒", 0.0, motion.duration]]:
+		var key: String = str(spec[0])
+		_number_field(str(spec[1]), float(entry.get(key, 1.0)), float(spec[2]), float(spec[3]), 0.05,
+			func(v: float): _edit_contact(idx, key, v))
+	_vector_fields("滑走速度 X/Y/Z （m/秒）", MotionRig.from_array(entry.get("slide", [0.0, 0.0, 0.0])),
+		-5.0, 5.0, 0.05, func(axis: int, v: float):
+			var value: Array = entry.get("slide", [0.0, 0.0, 0.0]).duplicate()
+			value[axis] = v
+			_edit_contact(idx, "slide", value))
+	_add_text(inspector, "黄色の球＝実際の固定目標。物体固定は参照物体の移動に追従します。")
+
 func _inspector_contacts() -> void:
+	_inspector_contact_locks()
 	_add_text(inspector, "接触・障害物テスト", true)
 	var top := _row(inspector)
 	for kind in ["箱", "球", "カプセル"]:
@@ -1179,6 +1300,8 @@ func _inspector_contacts() -> void:
 		motion.record_undo()
 		rig.clear_test_objects()
 		selected_test = -1
+		motion.evaluate(motion.play_time)
+		_refresh_contact_markers()
 		_refresh_inspector(), top)
 	if not rig.test_objects.is_empty():
 		var choices := OptionButton.new()
@@ -1213,6 +1336,7 @@ func _show_raw_pose() -> void:
 
 func _inspector_diagnostics() -> void:
 	_add_text(inspector, "リアルタイム診断", true)
+	_add_text(inspector, "IK目標・接地固定の誤差と複数IKの関節共有を検査します。")
 	_check("IKと制約を除いた原本姿勢を表示", show_original, func(on: bool):
 		show_original = on
 		motion.evaluate(motion.play_time)
