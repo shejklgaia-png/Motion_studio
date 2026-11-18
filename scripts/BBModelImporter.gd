@@ -174,11 +174,11 @@ func _element(entry: Dictionary, parent: Node3D, parent_origin: Vector3) -> void
 	node.add_child(body)
 	mesh_count += 1
 
-func _surface(surfaces: Dictionary, key: String) -> SurfaceTool:
+func _surface(surfaces: Dictionary, key: String) -> Dictionary:
 	if not surfaces.has(key):
 		var tool := SurfaceTool.new()
 		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-		surfaces[key] = tool
+		surfaces[key] = {"tool": tool, "count": 0}
 	return surfaces[key]
 
 func _texture_key(face: Dictionary) -> String:
@@ -190,7 +190,8 @@ func _texture_key(face: Dictionary) -> String:
 func _write_face(surfaces: Dictionary, pts: Array, uv: Array, texkey: String) -> void:
 	if pts.size() < 3 or uv.size() != pts.size():
 		return
-	var tool := _surface(surfaces, texkey)
+	var surface: Dictionary = _surface(surfaces, texkey)
+	var tool: SurfaceTool = surface["tool"]
 	var size: Vector2 = texture_sizes.get(texkey, uv_size)
 	for i in range(1, pts.size() - 1):
 		var indices := [0, i, i + 1]
@@ -203,12 +204,14 @@ func _write_face(surfaces: Dictionary, pts: Array, uv: Array, texkey: String) ->
 			var t: Vector2 = uv[k]
 			tool.set_uv(Vector2(t.x / size.x, t.y / size.y))
 			tool.add_vertex(pts[k])
+			surface["count"] = int(surface["count"]) + 1
 
 func _finish(surfaces: Dictionary, palette_idx: int) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	for key in surfaces.keys():
-		var tool: SurfaceTool = surfaces[key]
-		if tool.get_vertex_count() == 0:
+		var surface: Dictionary = surfaces[key]
+		var tool: SurfaceTool = surface["tool"]
+		if int(surface["count"]) == 0:
 			continue
 		tool.generate_normals()
 		tool.commit(mesh)
