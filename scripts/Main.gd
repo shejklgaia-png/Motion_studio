@@ -40,6 +40,7 @@ var selected_test: int = -1
 var mode: String = "モーション"
 var playing: bool = false
 var playback_speed: float = 1.0
+var bake_target_fps: int = 60
 var show_original: bool = false
 var camera_yaw: float = 0.62
 var camera_pitch: float = 0.42
@@ -594,9 +595,19 @@ func _refresh_part_picker() -> void:
 func _refresh_key_buttons() -> void:
 	for child in key_row.get_children():
 		child.queue_free()
-	for frame in motion.frames:
-		var t: float = float(frame["time"])
+	# A baked timeline may have thousands of keys. Only show sampled shortcuts;
+	# all frames remain accessible from the scrubber and by frame stepping.
+	var count: int = motion.frames.size()
+	if count > 40:
+		var summary := _add_text(key_row, "%dキー　時間バーで移動　" % count)
+		summary.custom_minimum_size.x = 185
+	var step_size: int = maxi(1, int(ceil(float(count) / 28.0)))
+	for index in range(0, count, step_size):
+		var t: float = float(motion.frames[index]["time"])
 		_make_button("◆ %.2f" % t, func(): _seek_to(t), key_row)
+	if count > 1 and (count - 1) % step_size != 0:
+		var last_t: float = float(motion.frames[count - 1]["time"])
+		_make_button("◆ %.2f" % last_t, func(): _seek_to(last_t), key_row)
 
 func _update_timeline() -> void:
 	seek.set_value_no_signal(motion.play_time)
@@ -723,6 +734,53 @@ func _check(label: String, checked: bool, changed: Callable) -> void:
 	check.toggled.connect(changed)
 	inspector.add_child(check)
 
+func _run_ik_fk_bake() -> void:
+	playing = false
+	play_button.text = "▶ 再生"
+	var result: Dictionary = motion.bake_ik_fk(bake_target_fps)
+	if not bool(result.get("ok", false)):
+		_note(str(result.get("message", "ベイクできませんでした")))
+		return
+	_after_model_change(str(result["message"]))
+	_refresh_inspector()
+
+func _restore_before_bake() -> void:
+	playing = false
+	play_button.text = "▶ 再生"
+	if not motion.restore_bake_source():
+		_note("ベイク前のモーションは保存されていません")
+		return
+	_after_model_change("ベイク前のモーションとIK・制約を復元しました")
+
+func _bake_controls() -> void:
+	var title := _add_text(inspector, "IK/FKベイク", true)
+	title.add_theme_color_override("font_color", Color("5ce3d5"))
+	_add_text(inspector, "IK・制約を計算した完成姿勢をキー化します。変換後はIK不要で再生できます。")
+	var fps_row := _row(inspector)
+	_add_text(fps_row, "記録精度")
+	var rate := OptionButton.new()
+	rate.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for value in [30, 60]:
+		rate.add_item("%dfps" % value, value)
+		if value == bake_target_fps:
+			rate.select(rate.item_count - 1)
+	rate.item_selected.connect(func(index: int):
+		bake_target_fps = rate.get_item_id(index))
+	fps_row.add_child(rate)
+	var run_button := _make_button("▶ IK/FKをキーフレーム化", _run_ik_fk_bake, inspector)
+	run_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(run_button, false, true)
+	if not motion.bake_report.is_empty():
+		var info: Dictionary = motion.bake_report
+		_add_text(inspector, "ベイク済み：%dキー / %dfps（IK停止）" % [
+			int(info.get("frame_count", 0)), int(info.get("fps", 0))])
+		_add_text(inspector, "中間フレームの最大誤差：位置 %.3fm / 回転 %.2f°" % [
+			float(info.get("max_position_error_m", 0.0)),
+			float(info.get("max_rotation_error_deg", 0.0))])
+	if not motion.bake_source.is_empty():
+		var restore_button := _make_button("↶ ベイク前に戻す", _restore_before_bake, inspector)
+		_style_button(restore_button)
+
 func _inspector_motion() -> void:
 	_add_text(inspector, "キーフレーム姿勢編集", true)
 	_add_text(inspector, "時間 %.3f秒 / 選択中：%s" % [motion.play_time, selected_part])
@@ -750,6 +808,7 @@ func _inspector_motion() -> void:
 		motion.duration = v
 		_update_timeline())
 	_add_text(inspector, "変更した値は、現在の再生位置にキーフレームとして保存されます。")
+	_bake_controls()
 
 func _set_chain_prop(key: String, value: Variant) -> void:
 	if selected_chain < 0 or selected_chain >= rig.chains.size():
@@ -940,6 +999,7 @@ func _inspector_diagnostics() -> void:
 	_add_text(inspector, "※ IK目標残差・足先の床距離・物理センサーを表示。全身の高精度干渉解析は今後の拡張対象です。")
 
 func _inspector_export() -> void:
+	_bake_controls()
 	_add_text(inspector, "保存・読み込み・Godotへ出力", true)
 	_make_button("プロジェクトをアプリ内に保存", func(): _note(motion.save_project("user://motion_studio.motion.json")), inspector)
 	_make_button("プロジェクトを別名で保存", func(): _file_dialog("save_as"), inspector)
@@ -949,7 +1009,7 @@ func _inspector_export() -> void:
 	_make_button("Godotアニメーション(.tres)を出力", func():
 		_note(motion.export_animation_tres("user://motion_animation.tres")), inspector)
 	_make_button("Godotアニメーションを別名で出力", func(): _file_dialog("export"), inspector)
-	_add_text(inspector, "エクスポート時には現在のIK・制約結果をフレームごとに焼き込みます。")
+	_add_text(inspector, "ベイク前でも出力時にIKをサンプリングします。ベイク後は保存済みFKだけを出力します。")
 	_add_text(inspector, "ユーザーデータ保存場所：" + OS.get_user_data_dir())
 	_add_text(inspector, "Androidでは外部ファイルへのアクセスや保存先の選択が端末・権限に依存します。")
 
