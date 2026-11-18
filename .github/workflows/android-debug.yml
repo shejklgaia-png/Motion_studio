@@ -64,6 +64,10 @@ jobs:
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_bake.gd
 
+      - name: Test preview overlay, file menu and touch gestures
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_touch_layout.gd
+
       - name: Export Android debug APK
         env:
           GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
