@@ -43,6 +43,9 @@ func _axes() -> Array[Vector3]:
 	if joint == null:
 		return [Vector3.RIGHT, Vector3.UP, Vector3.BACK]
 	var base: Basis = joint.global_transform.basis.orthonormalized()
+	if tool == "移動" and joint.get_parent() is Node3D:
+		var parent_node: Node3D = joint.get_parent()
+		base = parent_node.global_transform.basis.orthonormalized()
 	return [base.x.normalized(), base.y.normalized(), base.z.normalized()]
 
 func _plane_vectors(axis: Vector3) -> Array[Vector3]:
