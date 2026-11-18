@@ -116,3 +116,6 @@ jobs:
           name: MotionStudio-Android-debug
           path: build/MotionStudio-debug.apk
           if-no-files-found: error
+      - name: Motion project corruption and backup recovery regression
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_project_storage_recovery.gd
