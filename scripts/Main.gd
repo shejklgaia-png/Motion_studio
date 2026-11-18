@@ -961,15 +961,13 @@ func _inspector_motion() -> void:
 				motion.record_undo()
 				motion.set_key_component(motion.play_time, selected_part, field, axis, value)
 				_refresh_key_buttons())
-	var line := _row(inspector)
-	_make_button("キーフレームを登録", _insert_key, line)
-	_make_button("選択キーを削除", _remove_key, line)
+	_add_text(inspector, "現在の時間で回転・位置・拡縮を変更すると、キーが追加されます。")
 	_number_field("再生速度", playback_speed, 0.1, 3.0, 0.1, func(v: float): playback_speed = v)
 	_number_field("長さ (秒)", motion.duration, 0.5, 60.0, 0.5, func(v: float):
 		motion.duration = v
 		_update_timeline())
-	_add_text(inspector, "変更した値は、現在の再生位置にキーフレームとして保存されます。")
-	_bake_controls()
+	_add_text(inspector, "追加・削除は上の「＋キー」「－キー」から操作します。")
+	_add_text(inspector, "IK/FKベイクは上の「詳細機能 ▾」から開けます。")
 
 func _set_chain_prop(key: String, value: Variant) -> void:
 	if selected_chain < 0 or selected_chain >= rig.chains.size():
