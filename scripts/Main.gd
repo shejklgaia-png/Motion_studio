@@ -94,7 +94,7 @@ func _ready() -> void:
 func _make_button(label: String, callback: Callable, owner: Node) -> Button:
 	var button := Button.new()
 	button.text = label
-	button.custom_minimum_size = Vector2(0, 44)
+	button.custom_minimum_size = Vector2(0, 48)
 	button.focus_mode = Control.FOCUS_ALL
 	button.pressed.connect(callback)
 	owner.add_child(button)
@@ -114,7 +114,7 @@ func _add_text(parent: Node, content: String, section: bool = false) -> Label:
 func _row(parent: Node) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 8)
 	parent.add_child(row)
 	return row
 
