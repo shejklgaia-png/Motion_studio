@@ -27,7 +27,7 @@ func _run() -> void:
 	if selector_bar == null or part_picker == null or animation_picker == null:
 		_fail("Always-visible part and animation selectors are missing")
 		return
-	if selector_bar.get_parent() != preview.get_parent():
+	if selector_bar.get_parent().get_parent() != preview.get_parent():
 		_fail("Selectors should be separate from the collapsible inspector")
 		return
 	if not selector_bar.visible or part_picker.size.x < 80.0 or animation_picker.size.x < 80.0:
