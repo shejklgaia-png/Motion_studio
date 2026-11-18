@@ -69,7 +69,7 @@ func load_bb_animation(index: int) -> String:
 		for channel in channels[part].keys():
 			channels[part][channel].sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 				return float(a.get("time", 0.0)) < float(b.get("time", 0.0)))
-	duration = maxf(0.1, float(animation.get("length", 0.0)), latest)
+	duration = maxf(0.1, maxf(float(animation.get("length", 0.0)), latest))
 	fps = clampi(int(animation.get("snapping", 24)), 24, 60)
 	constraints.clear()
 	history.clear()
