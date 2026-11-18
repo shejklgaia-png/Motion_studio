@@ -75,7 +75,7 @@ func load_bb_animation(index: int) -> String:
 	history.clear()
 	future.clear()
 	frames.clear()
-	var frame_total := min(1800, int(ceil(duration * float(fps))) + 1)
+	var frame_total: int = mini(1800, int(ceil(duration * float(fps))) + 1)
 	for i in range(frame_total):
 		var t := minf(float(i) / float(fps), duration)
 		if i == frame_total - 1:
@@ -265,8 +265,8 @@ func _solve_ccd(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target: Ve
 		if end.to_global(tip).distance_to(target) < 0.008:
 			break
 		for joint in [mid, root]:
-			var from_joint := end.to_global(tip) - joint.global_position
-			var to_target := target - joint.global_position
+			var from_joint: Vector3 = end.to_global(tip) - joint.global_position
+			var to_target: Vector3 = target - joint.global_position
 			_rotate_toward(joint, from_joint, to_target, 0.35)
 
 func _solve_fabrik(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target: Vector3) -> void:
@@ -319,7 +319,7 @@ func undo() -> bool:
 	if history.is_empty():
 		return false
 	future.append(JSON.stringify(snapshot()))
-	var previous := JSON.parse_string(history.pop_back())
+	var previous: Variant = JSON.parse_string(history.pop_back())
 	if previous is Dictionary:
 		restore(previous)
 		return true
@@ -329,7 +329,7 @@ func redo() -> bool:
 	if future.is_empty():
 		return false
 	history.append(JSON.stringify(snapshot()))
-	var next := JSON.parse_string(future.pop_back())
+	var next: Variant = JSON.parse_string(future.pop_back())
 	if next is Dictionary:
 		restore(next)
 		return true
