@@ -645,12 +645,18 @@ func _update_camera() -> void:
 func _note(message: String) -> void:
 	message_label.text = message
 
+func _export_animation(path: String) -> void:
+	_note(motion.export_animation_tres(path))
+	# The report belongs to the exported file, not to a live preview state.
+	if mode == "ベイク":
+		_refresh_inspector()
+
 func _toolbar_action(action: String) -> void:
 	match action:
 		"import": _file_dialog("import")
 		"save": _note(motion.save_project("user://motion_studio.motion.json"))
 		"open": _file_dialog("open")
-		"export": _note(motion.export_animation_tres("user://motion_animation.tres"))
+		"export": _export_animation("user://motion_animation.tres")
 		"undo":
 			if motion.undo():
 				_after_model_change("操作を取り消しました")
@@ -686,7 +692,7 @@ func _file_dialog(kind: String) -> void:
 				_fit_import_camera()
 				_after_model_change(result)
 			"save_as": _note(motion.save_project(path))
-			"export": _note(motion.export_animation_tres(path))
+			"export": _export_animation(path)
 		picker.queue_free())
 	picker.canceled.connect(func(): picker.queue_free())
 	add_child(picker)
@@ -1358,6 +1364,26 @@ func _inspector_export() -> void:
 	header.add_theme_color_override("font_color", Color("acc7d6"))
 	_add_text(inspector, "上部の「ファイル ▾」から、モデル読み込み・保存・復元・Godot書き出しを選べます。")
 	_add_text(inspector, "ベイク済みモーションは、IKの再計算なしでGodotアニメーションへ書き出せます。")
+	_add_text(inspector, "書き出し時に.tresを再読込し、関節のローカル位置・回転・拡縮を照合します。")
+	if motion.last_export_report.is_empty():
+		_add_text(inspector, "出力精度の結果は、最初の書き出し後にここへ表示されます。")
+		return
+	var audit: Dictionary = motion.last_export_report
+	var heading: String = "✓ 前回の書き出しを検証済み" if bool(audit.get("ok", false)) else "⚠ 前回の書き出しに検証警告"
+	_add_text(inspector, heading, true)
+	_add_text(inspector, "照合：キー %d点・中間 %d点・関節チャンネル %d件" % [
+		int(audit.get("key_samples", 0)), int(audit.get("mid_samples", 0)), int(audit.get("tracks_checked", 0))])
+	_add_text(inspector, "キー最大差：位置 %.5fm / 回転 %.3f° / 倍率 %.5f" % [
+		float(audit.get("max_position_error_m", 0.0)),
+		float(audit.get("max_rotation_error_deg", 0.0)), float(audit.get("max_scale_error", 0.0))])
+	_add_text(inspector, "キー間最大差：位置 %.5fm / 回転 %.3f° / 倍率 %.5f" % [
+		float(audit.get("mid_position_error_m", 0.0)),
+		float(audit.get("mid_rotation_error_deg", 0.0)), float(audit.get("mid_scale_error", 0.0))])
+	if bool(audit.get("interpolation_warning", false)):
+		_add_text(inspector, "⚠ キー間の補間に差があります。FPSを上げてベイク・再出力してください。")
+	for problem in audit.get("errors", []):
+		_add_text(inspector, "⚠ " + str(problem))
+	_add_text(inspector, "※ この検査は現在のモデル階層と出力トラックの照合です。ゲーム側の階層・ルートが違う場合の一致は保証しません。")
 
 func _plane_position(screen_pos: Vector2, height: float) -> Vector3:
 	var origin := camera.project_ray_origin(screen_pos)
