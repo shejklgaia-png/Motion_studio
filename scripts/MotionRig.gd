@@ -40,8 +40,9 @@ func _clear_model() -> void:
 func _color(rgb: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = rgb
-	material.metallic = 0.25
-	material.roughness = 0.6
+	material.metallic = 0.0
+	material.roughness = 1.0
+	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	return material
 
 func _register_part(label: String, node: Node3D) -> String:
