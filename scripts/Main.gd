@@ -855,11 +855,12 @@ func _insert_key() -> void:
 	_note("現在の姿勢をキーフレームに保存しました")
 
 func _remove_key() -> void:
-	motion.record_undo()
-	motion.delete_key(motion.play_time)
-	_refresh_key_buttons()
-	_update_history_buttons()
-	_note("現在のキーを削除しました（元に戻すには↶）")
+	if motion.delete_key(motion.play_time):
+		_refresh_key_buttons()
+		_update_history_buttons()
+		_note("現在のキーを削除しました（元に戻すには↶）")
+	else:
+		_note("ここに削除できるキーはありません。◆をタップして選択してください")
 
 func _process(delta: float) -> void:
 	if motion == null:
