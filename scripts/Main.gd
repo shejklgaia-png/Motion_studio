@@ -1,6 +1,6 @@
 extends Control
 
-const MODES := ["モーション", "IK", "制約", "接触", "診断", "ベイク"]
+const MODES := ["階層", "モーション", "IK", "制約", "接触", "診断", "ベイク"]
 var rig: MotionRig
 var motion: MotionEngine
 var stage: Node3D
@@ -28,6 +28,9 @@ var drag_value: float = 0.0
 var drag_factor: float = 0.0
 var inspector: VBoxContainer
 var key_row: HBoxContainer
+var timeline_view: MotionTimelineView
+var outliner: MotionOutliner
+var selection_badge: Label
 var seek: HSlider
 var time_label: Label
 var message_label: Label
@@ -106,8 +109,8 @@ func _panel(parent: Node, bg: Color) -> VBoxContainer:
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var background := StyleBoxFlat.new()
 	background.bg_color = bg
-	background.set_corner_radius_all(10)
-	background.set_content_margin_all(9)
+	background.set_corner_radius_all(4)
+	background.set_content_margin_all(7)
 	box.add_theme_stylebox_override("panel", background)
 	parent.add_child(box)
 	var body := VBoxContainer.new()
@@ -117,22 +120,24 @@ func _panel(parent: Node, bg: Color) -> VBoxContainer:
 
 func _style_button(button: Button, active: bool = false, important: bool = false) -> void:
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color("1e807e") if active else (Color("305275") if important else Color("25374b"))
-	normal.set_corner_radius_all(8)
+	normal.bg_color = Color("3a6795") if active else (Color("3c4d69") if important else Color("333a49"))
+	normal.set_corner_radius_all(4)
+	normal.border_width_bottom = 1
+	normal.border_color = Color("475061")
 	normal.set_content_margin_all(5)
 	button.add_theme_stylebox_override("normal", normal)
 	var hover := normal.duplicate()
-	hover.bg_color = Color("368c8e") if active else Color("3b5771")
+	hover.bg_color = Color("4a80b0") if active else Color("455268")
 	button.add_theme_stylebox_override("hover", hover)
 	var press := normal.duplicate()
-	press.bg_color = Color("185f65")
+	press.bg_color = Color("2b5680")
 	button.add_theme_stylebox_override("pressed", press)
 	button.add_theme_font_size_override("font_size", 16)
 	button.add_theme_color_override("font_color", Color("ffffff"))
 
 func _build_interface() -> void:
 	var back := ColorRect.new()
-	back.color = Color("131c29")
+	back.color = Color("171b24")
 	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(back)
 	var layout := VBoxContainer.new()
@@ -141,9 +146,10 @@ func _build_interface() -> void:
 	add_child(layout)
 
 	# A small app header: file actions live in the next row and in "その他".
-	var head := _panel(layout, Color("1a293b"))
+	var head := _panel(layout, Color("252b36"))
 	var header := _row(head)
 	var title := _add_text(header, "MOTION STUDIO", true)
+	title.add_theme_font_size_override("font_size", 17)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var help_button := _make_button("？", _show_help, header)
 	help_button.custom_minimum_size.x = 50
@@ -197,6 +203,20 @@ func _build_interface() -> void:
 	viewport.own_world_3d = true
 	preview_container.add_child(viewport)
 
+	var viewport_title := Label.new()
+	viewport_title.text = "PERSPECTIVE  |  3D VIEW"
+	viewport_title.position = Vector2(10, 8)
+	viewport_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	viewport_title.add_theme_font_size_override("font_size", 11)
+	viewport_title.add_theme_color_override("font_color", Color("b4c5d7"))
+	preview_frame.add_child(viewport_title)
+	selection_badge = Label.new()
+	selection_badge.position = Vector2(10, 27)
+	selection_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selection_badge.add_theme_font_size_override("font_size", 12)
+	selection_badge.add_theme_color_override("font_color", Color("6dc5ff"))
+	preview_frame.add_child(selection_badge)
+
 	# Transform tool switches float at the lower-right corner of the preview.
 	preview_tools_panel = PanelContainer.new()
 	preview_tools_panel.anchor_left = 1.0
@@ -208,8 +228,8 @@ func _build_interface() -> void:
 	preview_tools_panel.offset_right = -8.0
 	preview_tools_panel.offset_bottom = -8.0
 	var overlay_style := StyleBoxFlat.new()
-	overlay_style.bg_color = Color(0.07, 0.12, 0.20, 0.86)
-	overlay_style.set_corner_radius_all(10)
+	overlay_style.bg_color = Color(0.10, 0.12, 0.17, 0.89)
+	overlay_style.set_corner_radius_all(5)
 	overlay_style.set_content_margin_all(5)
 	preview_tools_panel.add_theme_stylebox_override("panel", overlay_style)
 	preview_frame.add_child(preview_tools_panel)
@@ -231,9 +251,9 @@ func _build_interface() -> void:
 	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
 
-	var timeline := _panel(layout, Color("1b2b3e"))
+	var timeline := _panel(layout, Color("232936"))
 	var controls := _row(timeline)
-	var track_label := _add_text(controls, "タイムライン")
+	var track_label := _add_text(controls, "TIMELINE")
 	track_label.add_theme_font_size_override("font_size", 15)
 	time_label = _add_text(controls, "0.00秒")
 	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -246,6 +266,9 @@ func _build_interface() -> void:
 	seek.custom_minimum_size.y = 23
 	seek.value_changed.connect(_seek_to)
 	timeline.add_child(seek)
+	timeline_view = MotionTimelineView.new()
+	timeline_view.seek_requested.connect(_seek_to)
+	timeline.add_child(timeline_view)
 	var transport := _row(timeline)
 	for item in [["◀", -1.0], ["▶|", 1.0]]:
 		var step_sign: float = float(item[1])
@@ -266,24 +289,28 @@ func _build_interface() -> void:
 	key_row = _row(key_scroll)
 
 	# The mode tabs remain visible; the large inspector is collapsible.
-	var editor := _panel(layout, Color("1d2c40"))
+	var editor := _panel(layout, Color("272d3a"))
 	var editor_head := _row(editor)
-	var editor_title := _add_text(editor_head, "編集・設定", true)
+	var editor_title := _add_text(editor_head, "BONE / PROPERTIES", true)
+	editor_title.add_theme_font_size_override("font_size", 15)
 	editor_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	editor_toggle = _make_button("閉じる ▲", _toggle_editor, editor_head)
 	editor_toggle.custom_minimum_size.x = 92
 	_style_button(editor_toggle)
 	var tabs_scroll := ScrollContainer.new()
-	tabs_scroll.custom_minimum_size.y = 45
+	tabs_scroll.custom_minimum_size.y = 44
+	tabs_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	tabs_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	editor.add_child(tabs_scroll)
+	layout.add_child(tabs_scroll)
+	# Blockbench places mode selection immediately above the 3D viewport.
+	layout.move_child(tabs_scroll, 2)
 	var tabs := _row(tabs_scroll)
 	for item in MODES:
 		var new_mode: String = item
 		var caption: String = str(item)
 		var tab := _make_button(caption, func(): _change_mode(new_mode), tabs)
-		tab.custom_minimum_size.x = 82 if item != "モーション" else 100
+		tab.custom_minimum_size.x = 84 if item != "モーション" else 98
 		mode_buttons[item] = tab
 		_style_button(tab, item == mode)
 	editor_body = VBoxContainer.new()
@@ -293,7 +320,7 @@ func _build_interface() -> void:
 	var part_col := VBoxContainer.new()
 	part_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(part_col)
-	var part_text := _add_text(part_col, "部位")
+	var part_text := _add_text(part_col, "BONE / 部位")
 	part_text.add_theme_font_size_override("font_size", 13)
 	part_picker = OptionButton.new()
 	part_picker.fit_to_longest_item = false
@@ -302,13 +329,15 @@ func _build_interface() -> void:
 	part_picker.custom_minimum_size.y = 40
 	part_picker.item_selected.connect(func(index: int):
 		selected_part = part_picker.get_item_text(index)
+		_refresh_timeline_view()
 		_refresh_inspector()
-		_update_gizmo())
+		_update_gizmo()
+		_update_selection_badge())
 	part_col.add_child(part_picker)
 	var anim_col := VBoxContainer.new()
 	anim_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(anim_col)
-	var anim_text := _add_text(anim_col, "アニメーション")
+	var anim_text := _add_text(anim_col, "ANIMATIONS")
 	anim_text.add_theme_font_size_override("font_size", 13)
 	animation_picker = OptionButton.new()
 	animation_picker.fit_to_longest_item = false
@@ -326,7 +355,7 @@ func _build_interface() -> void:
 			_after_model_change(result))
 	anim_col.add_child(animation_picker)
 	editor_scroll = ScrollContainer.new()
-	editor_scroll.custom_minimum_size.y = 167
+	editor_scroll.custom_minimum_size.y = 140
 	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -342,7 +371,7 @@ func _build_interface() -> void:
 	message_label.clip_text = true
 	message_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	message_label.add_theme_font_size_override("font_size", 13)
-	message_label.add_theme_color_override("font_color", Color("b7c9db"))
+	message_label.add_theme_color_override("font_color", Color("a8b8c9"))
 	message_label.custom_minimum_size.y = 19
 
 func _on_file_menu_action(id: int) -> void:
@@ -381,7 +410,7 @@ func _zoom(multiplier: float) -> void:
 func _update_gizmo() -> void:
 	if motion_gizmo == null or rig == null or camera == null:
 		return
-	var show_handles: bool = mode == "モーション" and not pan_view and not playing and rig.parts.has(selected_part)
+	var show_handles: bool = mode in ["モーション", "階層"] and not pan_view and not playing and rig.parts.has(selected_part)
 	var selected_node: Node3D = rig.parts[selected_part] if rig.parts.has(selected_part) else null
 	motion_gizmo.set_state(selected_node, camera, active_transform, drag_axis, show_handles)
 
@@ -630,8 +659,34 @@ func _refresh_part_picker() -> void:
 		part_picker.select(selected_index)
 		selected_part = part_picker.get_item_text(selected_index)
 	_update_gizmo()
+	_update_selection_badge()
+	_refresh_timeline_view()
+
+func _update_selection_badge() -> void:
+	if selection_badge != null:
+		selection_badge.text = "◇  " + selected_part if rig != null and rig.parts.has(selected_part) else "選択なし"
+
+func _refresh_timeline_view() -> void:
+	if timeline_view != null and motion != null:
+		timeline_view.set_timeline(motion.frames, selected_part, motion.duration, motion.play_time)
+
+func _on_outliner_selected(name: String) -> void:
+	selected_part = name
+	_refresh_part_picker()
+	_update_gizmo()
+	_refresh_timeline_view()
+	_note("選択：%s" % name)
+
+func _inspector_outliner() -> void:
+	outliner = MotionOutliner.new()
+	inspector.add_child(outliner)
+	outliner.part_selected.connect(_on_outliner_selected)
+	outliner.set_model(rig, selected_part)
+	var go_to_edit := _make_button("選択した部位のモーションを編集", func(): _change_mode("モーション"), inspector)
+	_style_button(go_to_edit, false, true)
 
 func _refresh_key_buttons() -> void:
+	_refresh_timeline_view()
 	for child in key_row.get_children():
 		child.queue_free()
 	# A baked timeline may have thousands of keys. Only show sampled shortcuts;
@@ -651,7 +706,9 @@ func _refresh_key_buttons() -> void:
 func _update_timeline() -> void:
 	seek.set_value_no_signal(motion.play_time)
 	seek.max_value = motion.duration
-	time_label.text = "%.2f秒" % motion.play_time
+	time_label.text = "%.2f秒  /  %.2f" % [motion.play_time, motion.duration]
+	if timeline_view != null:
+		timeline_view.set_playhead(motion.play_time)
 
 func _seek_to(value: float) -> void:
 	motion.evaluate(value)
@@ -709,6 +766,7 @@ func _refresh_inspector() -> void:
 		return
 	_clear_inspector()
 	var hints := {
+		"階層": "パーツの親子関係を確認して部位を選択",
 		"モーション": "部位を選び、位置・回転を変更",
 		"IK": "脚の目標位置や計算方法を設定",
 		"制約": "動かせる範囲を設定",
@@ -720,6 +778,7 @@ func _refresh_inspector() -> void:
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.add_theme_color_override("font_color", Color("90b9cc"))
 	match mode:
+		"階層": _inspector_outliner()
 		"モーション": _inspector_motion()
 		"IK": _inspector_ik()
 		"制約": _inspector_constraints()
@@ -1162,7 +1221,7 @@ func _viewport_input(event: InputEvent) -> void:
 		_move_pointer(_camera_screen_position(event.position), _camera_screen_position(event.relative))
 
 func _start_transform_drag(point: Vector2) -> bool:
-	if mode != "モーション" or pan_view or not rig.parts.has(selected_part) or playing:
+	if mode not in ["モーション", "階層"] or pan_view or not rig.parts.has(selected_part) or playing:
 		return false
 	var hit: Dictionary = motion_gizmo.hit_test(point)
 	if hit.is_empty():
@@ -1235,6 +1294,7 @@ func _pick_from_screen(position: Vector2) -> void:
 		selected_part = str(collider.get_meta("part_name"))
 		_refresh_part_picker()
 		_refresh_inspector()
+		_refresh_timeline_view()
 		_update_gizmo()
 	elif collider.has_meta("test_index"):
 		selected_test = int(collider.get_meta("test_index"))
