@@ -44,6 +44,8 @@ func import_data(target: MotionRig, data: Dictionary, path: String) -> String:
 	rig.model_root.name = "BlockbenchModel"
 	rig.add_child(rig.model_root)
 	rig.imported_source = path
+	var format_version := str(data.get("meta", {}).get("format_version", "4.0"))
+	rig.bb_legacy_axes = format_version.split(".")[0].to_int() < 5
 	rig.bb_animations = data.get("animations", []).duplicate(true)
 	rig.bb_uuid_to_name.clear()
 	rig.bb_import_warnings.clear()
