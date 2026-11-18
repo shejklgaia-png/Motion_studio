@@ -60,6 +60,16 @@ func _calc_radius() -> void:
 	var height: float = maxf(float(view_camera.get_viewport().size.y), 1.0)
 	radius = maxf(0.025, 2.0 * distance * tan(deg_to_rad(view_camera.fov) * 0.5) * radius_pixels / height)
 
+func _draw_thick_segment(a: Vector3, b: Vector3, half_width: float) -> void:
+	var direction: Vector3 = (b - a).normalized()
+	var toward_eye: Vector3 = (view_camera.global_position - (a + b) * 0.5).normalized()
+	var normal: Vector3 = direction.cross(toward_eye)
+	if normal.length_squared() < 0.00001:
+		normal = direction.cross(Vector3.UP if absf(direction.y) < 0.9 else Vector3.RIGHT)
+	normal = normal.normalized() * half_width
+	for p in [a - normal, a + normal, b + normal, a - normal, b + normal, b - normal]:
+		mesh.surface_add_vertex(p)
+
 func draw_handles() -> void:
 	if mesh == null:
 		return
@@ -70,7 +80,7 @@ func draw_handles() -> void:
 	var axes := _axes()
 	for i in range(3):
 		var normal: Vector3 = axes[i]
-		mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
+		mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES if tool == "回転" else Mesh.PRIMITIVE_LINES, material)
 		mesh.surface_set_color(HOT if selected_axis == i else COLORS[i])
 		if tool == "回転":
 			var dirs := _plane_vectors(normal)
@@ -78,8 +88,7 @@ func draw_handles() -> void:
 			for n in range(1, 73):
 				var angle: float = TAU * float(n) / 72.0
 				var current: Vector3 = gizmo_center + (dirs[0] * cos(angle) + dirs[1] * sin(angle)) * radius
-				mesh.surface_add_vertex(prev)
-				mesh.surface_add_vertex(current)
+				_draw_thick_segment(prev, current, radius * 0.029)
 				prev = current
 		else:
 			var tip: Vector3 = gizmo_center + normal * radius
