@@ -82,8 +82,18 @@ func _run() -> void:
 	if not motion.load_project("user://contact_anchor.motion.json").begins_with("読み込みました"):
 		_fail("Cannot restore contacts")
 		return
-	if motion.contact_constraints.size() != 2 or motion.contact_constraints[1] != saved_contact:
-		_fail("Loading project lost contact constraint values")
+	if motion.contact_constraints.size() != 2:
+		_fail("Loading project lost contact entries: " + str(motion.contact_constraints.size()))
+		return
+	var restored_contact: Dictionary = motion.contact_constraints[1]
+	if str(restored_contact.get("mode", "")) != str(saved_contact["mode"]) or int(restored_contact.get("chain_index", -1)) != int(saved_contact["chain_index"]):
+		_fail("Contact attachment type or chain was not restored")
+		return
+	if MotionRig.from_array(restored_contact["point"]).distance_to(MotionRig.from_array(saved_contact["point"])) > 0.00001:
+		_fail("Local contact anchor was not restored")
+		return
+	if absf(float(restored_contact["friction"]) - float(saved_contact["friction"])) > 0.00001:
+		_fail("Contact friction was not restored")
 		return
 	motion.evaluate(0.5)
 	var bakeres: Dictionary = motion.bake_ik_fk(30)
