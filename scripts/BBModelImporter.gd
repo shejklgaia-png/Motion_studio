@@ -284,7 +284,7 @@ func _cube_geometry(entry: Dictionary) -> ArrayMesh:
 		var corners: Array = []
 		for vertex in coords[side]:
 			corners.append((vertex - pivot) / UNIT)
-		var box_uv := entry.get("uv_offset", [0, 0])
+		var box_uv: Variant = entry.get("uv_offset", [0, 0])
 		var uv: Array = face.get("uv", [0, 0, 16, 16])
 		if uv.size() != 4:
 			uv = [0, 0, 16, 16]
