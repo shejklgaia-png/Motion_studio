@@ -90,12 +90,12 @@ func _verify() -> void:
 	var stored_quat: Quaternion = rig.parts[chain["root"]].quaternion
 	rig.chains[0]["target"].global_position += Vector3(0.9, 0.0, 0.9)
 	engine.evaluate(0.5)
-	if stored_quat.angle_to(rig.parts[chain["root"]].quaternion) > 0.0001:
-		_fail("Baked 2-bone FK still depends on target: angle=" +
-			str(stored_quat.angle_to(rig.parts[chain["root"]].quaternion)) +
-			" enabled=" + str(rig.chains[0]["enabled"]) +
-			" before=" + str(stored_quat) +
-			" after=" + str(rig.parts[chain["root"]].quaternion))
+	# Godot Quaternion.angle_to can round two identical non-unit quaternions
+	# to a small ~0.001 rad angle. Compare components directly for exact FK playback.
+	var after_quat: Quaternion = rig.parts[chain["root"]].quaternion
+	var component_delta: float = absf(stored_quat.x - after_quat.x) + absf(stored_quat.y - after_quat.y) + absf(stored_quat.z - after_quat.z) + absf(stored_quat.w - after_quat.w)
+	if component_delta > 0.00001:
+		_fail("Baked FK changed after moving disabled IK target: " + str(component_delta))
 		return
 	if not engine.restore_bake_source():
 		_fail("Cannot restore pre-bake 2-bone IK motion")
