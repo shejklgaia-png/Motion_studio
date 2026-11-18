@@ -2,6 +2,7 @@ extends Control
 class_name MotionTimelineView
 
 signal seek_requested(time: float)
+signal key_move_requested(original_time: float, destination_time: float)
 
 const LABEL_WIDTH := 94.0
 const HEADER_H := 27.0
@@ -20,16 +21,25 @@ var play_time: float = 0.0
 var selected_part: String = ""
 var keys: Dictionary = {}
 var scrubbing: bool = false
+var frame_times: Array[float] = []
+var timeline_fps: int = 60
+var press_position: Vector2 = Vector2.ZERO
+var key_drag_start: float = -1.0
+var key_drag_preview: float = -1.0
+var dragging_key: bool = false
+var mouse_suppression_until_ms: int = 0
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(0, HEADER_H + ROW_H * 3.0 + 7.0)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-func set_timeline(frames: Array, part: String, duration: float, at_time: float) -> void:
+func set_timeline(frames: Array, part: String, duration: float, at_time: float, fps: int = 60) -> void:
 	selected_part = part
 	clip_duration = maxf(0.01, duration)
 	play_time = clampf(at_time, 0.0, clip_duration)
+	timeline_fps = maxi(1, fps)
+	frame_times.clear()
 	keys = {"rotation": [], "position": [], "scale": []}
 	var last_values: Dictionary = {}
 	for frame in frames:
@@ -40,6 +50,7 @@ func set_timeline(frames: Array, part: String, duration: float, at_time: float) 
 		if pose.is_empty():
 			continue
 		var t: float = float(frame.get("time", 0.0))
+		frame_times.append(t)
 		for channel in ROWS:
 			var values: Array = pose.get(channel, [])
 			if values.size() < 3:
@@ -103,42 +114,104 @@ func _draw() -> void:
 				continue
 			prior_drawn = x
 			var center := Vector2(x, y + ROW_H * 0.5)
+			var color: Color = Color("ffde88") if absf(play_time - float(t)) < 0.001 else KEY
 			var diamond := PackedVector2Array([
-				center + Vector2(0, -5), center + Vector2(5, 0),
-				center + Vector2(0, 5), center + Vector2(-5, 0)])
-			draw_colored_polygon(diamond, KEY)
+				center + Vector2(0, -7), center + Vector2(7, 0),
+				center + Vector2(0, 7), center + Vector2(-7, 0)])
+			draw_colored_polygon(diamond, color)
+			if absf(play_time - float(t)) < 0.001:
+				draw_arc(center, 11.0, 0.0, TAU, 20, BLUE, 1.6)
+	if dragging_key and key_drag_start >= 0.0:
+		var ghost_x: float = _time_to_x(key_drag_preview)
+		draw_line(Vector2(ghost_x, 0), Vector2(ghost_x, size.y - 2), Color("ffda74", 0.85), 2.0)
+		draw_string(font, Vector2(clampf(ghost_x - 20.0, LABEL_WIDTH, size.x - 48.0), 24),
+			"%.2fs" % key_drag_preview, HORIZONTAL_ALIGNMENT_LEFT, 45, 12, Color("ffe3aa"))
 	var head: float = _time_to_x(play_time)
 	draw_line(Vector2(head, 0), Vector2(head, size.y - 2), BLUE, 2.0)
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(head - 6, 1), Vector2(head + 6, 1), Vector2(head, 10)]), BLUE)
 
+func _find_key_under_touch(point: Vector2) -> float:
+	if point.x < LABEL_WIDTH - 5.0 or point.y < HEADER_H:
+		return -1.0
+	var row: int = clampi(int((point.y - HEADER_H) / ROW_H), 0, ROWS.size() - 1)
+	var best: float = 17.0
+	var found: float = -1.0
+	for time in keys.get(ROWS[row], []):
+		var t: float = float(time)
+		if t <= 0.0005 or t >= clip_duration - 0.0005:
+			continue
+		var distance: float = absf(_time_to_x(t) - point.x)
+		if distance < best:
+			best = distance
+			found = t
+	return found
+
+func _snap_time(value: float) -> float:
+	return clampf(snappedf(value, 1.0 / float(timeline_fps)), 0.0, clip_duration)
+
 func _jump_to_position(position: Vector2) -> void:
 	if position.x < LABEL_WIDTH:
 		return
 	var requested: float = _x_to_time(position.x)
-	# Similar to Blockbench: touching close to a keyframe seeks that exact key.
 	if position.y >= HEADER_H:
 		var row: int = clampi(int((position.y - HEADER_H) / ROW_H), 0, ROWS.size() - 1)
 		for value in keys.get(ROWS[row], []):
-			if absf(_time_to_x(float(value)) - position.x) < 9.0:
+			if absf(_time_to_x(float(value)) - position.x) < 17.0:
 				requested = float(value)
 				break
 	seek_requested.emit(requested)
 
+func _press(point: Vector2) -> void:
+	scrubbing = true
+	press_position = point
+	key_drag_start = _find_key_under_touch(point)
+	key_drag_preview = key_drag_start
+	dragging_key = false
+	_jump_to_position(point)
+
+func _move(point: Vector2) -> void:
+	if not scrubbing:
+		return
+	if key_drag_start >= 0.0 and absf(point.x - press_position.x) >= 12.0:
+		dragging_key = true
+	if dragging_key:
+		key_drag_preview = _snap_time(_x_to_time(point.x))
+		seek_requested.emit(key_drag_preview)
+		queue_redraw()
+	else:
+		_jump_to_position(point)
+
+func _release() -> void:
+	if not scrubbing:
+		return
+	scrubbing = false
+	if dragging_key and key_drag_start >= 0.0 and absf(key_drag_preview - key_drag_start) > 0.0005:
+		key_move_requested.emit(key_drag_start, key_drag_preview)
+	dragging_key = false
+	key_drag_start = -1.0
+	key_drag_preview = -1.0
+	queue_redraw()
+
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
-		scrubbing = event.pressed
+		mouse_suppression_until_ms = Time.get_ticks_msec() + 180
 		if event.pressed:
-			_jump_to_position(event.position)
+			_press(event.position)
+		else:
+			_release()
 		accept_event()
-	elif event is InputEventScreenDrag and scrubbing:
-		_jump_to_position(event.position)
+	elif event is InputEventScreenDrag:
+		mouse_suppression_until_ms = Time.get_ticks_msec() + 180
+		_move(event.position)
 		accept_event()
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		scrubbing = event.pressed
-		if event.pressed:
-			_jump_to_position(event.position)
-		accept_event()
-	elif event is InputEventMouseMotion and scrubbing:
-		_jump_to_position(event.position)
-		accept_event()
+	elif Time.get_ticks_msec() >= mouse_suppression_until_ms:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				_press(event.position)
+			else:
+				_release()
+			accept_event()
+		elif event is InputEventMouseMotion and scrubbing:
+			_move(event.position)
+			accept_event()
