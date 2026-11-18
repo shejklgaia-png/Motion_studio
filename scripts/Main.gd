@@ -581,10 +581,7 @@ func _inspector_contacts() -> void:
 					motion.record_undo()
 					var v: Vector3 = test_node.position if field == "position" else (test_node.rotation_degrees if field == "rotation" else test_node.scale)
 					v[axis] = value
-					match field:
-						"position": test_node.position = v
-						"rotation": test_node.rotation_degrees = v
-						"scale": test_node.scale = v)
+					_apply_test_transform(test_node, field, axis, value))
 	_add_text(inspector, "足先の接触センサーは床と障害物の接触を物理判定します。")
 	_add_text(inspector, "※ 現段階では四脚サンプルのみ接触センサーを装備しています。")
 
@@ -694,3 +691,18 @@ func _pick_from_screen(position: Vector2) -> void:
 		dragging_object = mode == "接触"
 		if dragging_object: motion.record_undo()
 		_refresh_inspector()
+func _apply_test_transform(target: Node3D, property_name: String, axis: int, value: float) -> void:
+	var transform_value: Vector3
+	if property_name == "position":
+		transform_value = target.position
+	elif property_name == "rotation":
+		transform_value = target.rotation_degrees
+	else:
+		transform_value = target.scale
+	transform_value[axis] = value
+	if property_name == "position":
+		target.position = transform_value
+	elif property_name == "rotation":
+		target.rotation_degrees = transform_value
+	else:
+		target.scale = transform_value
