@@ -84,6 +84,10 @@ jobs:
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_ik_touch.gd
 
+      - name: Test touch timeline drag and editing usability
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_key_timeline_ux.gd
+
       - name: Export Android debug APK
         env:
           GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
