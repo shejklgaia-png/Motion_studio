@@ -21,7 +21,7 @@ static func compare(animation: Animation, rig: Node3D, time_seconds: float, tole
 		if animation.track_get_key_count(track) == 0:
 			errors.append("キーフレームがありません: " + str(path))
 			continue
-		var sampled: Variant = animation.value_track_interpolate(track, t) if kind == Animation.TYPE_VALUE else null
+		var sampled: Variant = null
 		match kind:
 			Animation.TYPE_POSITION_3D:
 				sampled = animation.position_track_interpolate(track, t)
