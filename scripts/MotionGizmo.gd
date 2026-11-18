@@ -11,7 +11,7 @@ var view_camera: Camera3D
 var tool: String = "回転"
 var selected_axis: int = -1
 var radius: float = 1.0
-var radius_pixels: float = 64.0
+var radius_pixels: float = 74.0
 var gizmo_center: Vector3 = Vector3.ZERO
 var available: bool = false
 const COLORS := [Color("f36b78"), Color("68d9a1"), Color("65a8ff")]
@@ -80,7 +80,7 @@ func draw_handles() -> void:
 	var axes := _axes()
 	for i in range(3):
 		var normal: Vector3 = axes[i]
-		mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES if tool == "回転" else Mesh.PRIMITIVE_LINES, material)
+		mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
 		mesh.surface_set_color(HOT if selected_axis == i else COLORS[i])
 		if tool == "回転":
 			var dirs := _plane_vectors(normal)
@@ -92,17 +92,14 @@ func draw_handles() -> void:
 				prev = current
 		else:
 			var tip: Vector3 = gizmo_center + normal * radius
-			mesh.surface_add_vertex(gizmo_center)
-			mesh.surface_add_vertex(tip)
+			_draw_thick_segment(gizmo_center, tip, radius * 0.036)
 			var dirs := _plane_vectors(normal)
 			if tool == "移動":
 				for sign in [-1.0, 1.0]:
-					mesh.surface_add_vertex(tip)
-					mesh.surface_add_vertex(tip - normal * radius * 0.23 + dirs[0] * radius * 0.09 * sign)
+					_draw_thick_segment(tip, tip - normal * radius * 0.22 + dirs[0] * radius * 0.12 * sign, radius * 0.031)
 			else:
 				for tangent in dirs:
-					mesh.surface_add_vertex(tip - tangent * radius * 0.09)
-					mesh.surface_add_vertex(tip + tangent * radius * 0.09)
+					_draw_thick_segment(tip - tangent * radius * 0.09, tip + tangent * radius * 0.09, radius * 0.033)
 		mesh.surface_end()
 
 func _point_segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
@@ -118,7 +115,7 @@ func hit_test(point: Vector2) -> Dictionary:
 		return {}
 	_calc_radius()
 	var axes := _axes()
-	var best: float = 19.0
+	var best: float = 26.0
 	var result: Dictionary = {}
 	for i in range(3):
 		var axis: Vector3 = axes[i]
@@ -145,7 +142,7 @@ func hit_test(point: Vector2) -> Dictionary:
 			var end2d: Vector2 = view_camera.unproject_position(endpoint)
 			var gap: float = _point_segment_distance(point, origin2d, end2d)
 			# Avoid selecting near the center where all three handles intersect.
-			if gap < best and point.distance_to(origin2d) > 11.0:
+			if gap < best and point.distance_to(origin2d) > 12.0:
 				best = gap
 				result = {"axis": i, "tangent": (end2d - origin2d).normalized(), "radius_pixels": maxf(1.0, origin2d.distance_to(end2d))}
 	return result
