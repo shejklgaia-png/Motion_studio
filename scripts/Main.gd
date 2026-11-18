@@ -15,6 +15,11 @@ var time_label: Label
 var message_label: Label
 var part_picker: OptionButton
 var mode_picker: OptionButton
+var mode_buttons: Dictionary = {}
+var editor_body: VBoxContainer
+var editor_scroll: ScrollContainer
+var editor_toggle: Button
+var guide_step: int = 0
 var animation_picker: OptionButton
 var camera_focus: Vector3 = Vector3(0, 1.05, 0)
 var play_button: Button
@@ -52,7 +57,8 @@ func _ready() -> void:
 func _make_button(label: String, callback: Callable, owner: Node) -> Button:
 	var button := Button.new()
 	button.text = label
-	button.custom_minimum_size = Vector2(0, 40)
+	button.custom_minimum_size = Vector2(0, 44)
+	button.focus_mode = Control.FOCUS_ALL
 	button.pressed.connect(callback)
 	owner.add_child(button)
 	return button
@@ -61,50 +67,99 @@ func _add_text(parent: Node, content: String, section: bool = false) -> Label:
 	var label := Label.new()
 	label.text = content
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	if section:
-		label.add_theme_font_size_override("font_size", 19)
+		label.add_theme_font_size_override("font_size", 18)
+		label.add_theme_color_override("font_color", Color("e9f5ff"))
 	parent.add_child(label)
 	return label
 
 func _row(parent: Node) -> HBoxContainer:
 	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", 6)
 	parent.add_child(row)
 	return row
 
+func _panel(parent: Node, bg: Color) -> VBoxContainer:
+	var box := PanelContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var background := StyleBoxFlat.new()
+	background.bg_color = bg
+	background.set_corner_radius_all(10)
+	background.set_content_margin_all(9)
+	box.add_theme_stylebox_override("panel", background)
+	parent.add_child(box)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 5)
+	box.add_child(body)
+	return body
+
+func _style_button(button: Button, active: bool = false, important: bool = false) -> void:
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("1e807e") if active else (Color("305275") if important else Color("25374b"))
+	normal.set_corner_radius_all(8)
+	normal.set_content_margin_all(5)
+	button.add_theme_stylebox_override("normal", normal)
+	var hover := normal.duplicate()
+	hover.bg_color = Color("368c8e") if active else Color("3b5771")
+	button.add_theme_stylebox_override("hover", hover)
+	var press := normal.duplicate()
+	press.bg_color = Color("185f65")
+	button.add_theme_stylebox_override("pressed", press)
+	button.add_theme_font_size_override("font_size", 16)
+	button.add_theme_color_override("font_color", Color("ffffff"))
+
 func _build_interface() -> void:
 	var back := ColorRect.new()
-	back.color = Color("17212e")
+	back.color = Color("131c29")
 	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(back)
 	var layout := VBoxContainer.new()
 	layout.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	layout.add_theme_constant_override("separation", 5)
 	add_child(layout)
-	var header := _row(layout)
+
+	# A small app header: file actions live in the next row and in "その他".
+	var head := _panel(layout, Color("1a293b"))
+	var header := _row(head)
 	var title := _add_text(header, "MOTION STUDIO", true)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mode_picker = OptionButton.new()
-	for item in MODES:
-		mode_picker.add_item(item)
-	mode_picker.item_selected.connect(func(index: int):
-		mode = MODES[index]
-		_refresh_inspector())
-	header.add_child(mode_picker)
-	var help_button := _make_button("使い方", _show_help, header)
-	help_button.tooltip_text = "最初に試す操作や各モードの説明"
-	var buttons := _row(layout)
-	for entry in [
-		["BB読込", "import"], ["保存", "save"], ["開く", "open"],
-		["出力", "export"], ["取消", "undo"], ["やり直し", "redo"]]:
-		var button_name: String = entry[1]
-		var label: String = entry[0]
-		var button := _make_button(label, func(): _toolbar_action(button_name), buttons)
+	var help_button := _make_button("？", _show_help, header)
+	help_button.custom_minimum_size.x = 50
+	_style_button(help_button)
+	help_button.tooltip_text = "短い3ステップ操作ガイド"
+
+	var toolbar := _row(layout)
+	for entry in [["読込", "import"], ["保存", "save"]]:
+		var action: String = entry[1]
+		var button := _make_button(entry[0], func(): _toolbar_action(action), toolbar)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_button(button, action == "import", action == "import")
+	play_button = _make_button("▶ 再生", _toggle_playback, toolbar)
+	play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(play_button, false, true)
+	var more := MenuButton.new()
+	more.text = "その他 ▾"
+	more.custom_minimum_size.y = 44
+	more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toolbar.add_child(more)
+	_style_button(more)
+	var popup := more.get_popup()
+	for item in [["プロジェクトを開く", 1], ["Godotへ出力", 2], ["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
+		popup.add_item(str(item[0]), int(item[1]))
+	popup.id_pressed.connect(func(id: int):
+		match id:
+			1: _toolbar_action("open")
+			2: _toolbar_action("export")
+			3: _toolbar_action("undo")
+			4: _toolbar_action("redo")
+			5: _show_help())
+
 	preview_container = SubViewportContainer.new()
 	preview_container.stretch = true
 	preview_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	preview_container.custom_minimum_size = Vector2(0, 250)
+	preview_container.custom_minimum_size = Vector2(0, 200)
 	layout.add_child(preview_container)
 	preview_container.gui_input.connect(_viewport_input)
 	viewport = SubViewport.new()
@@ -112,41 +167,95 @@ func _build_interface() -> void:
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.own_world_3d = true
 	preview_container.add_child(viewport)
-	var guide := _add_text(layout, "基本操作：①再生 ②モデルの脚をタップ ③下の位置・回転を調整。背景ドラッグで視点を回転")
+
+	var guide := _add_text(layout, "3D：部位をタップで選択　／　背景ドラッグで視点回転")
+	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
+	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
-	var transport := _row(layout)
-	play_button = _make_button("▶ 再生", _toggle_playback, transport)
-	_make_button("◀", func(): _seek_by(-1.0 / float(motion.fps)), transport)
-	_make_button("▶|", func(): _seek_by(1.0 / float(motion.fps)), transport)
-	_make_button("＋キー", _insert_key, transport)
-	_make_button("－キー", _remove_key, transport)
-	time_label = _add_text(transport, "0.00秒")
-	time_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var timeline := _panel(layout, Color("1b2b3e"))
+	var controls := _row(timeline)
+	var track_label := _add_text(controls, "タイムライン")
+	track_label.add_theme_font_size_override("font_size", 15)
+	time_label = _add_text(controls, "0.00秒")
+	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	time_label.add_theme_color_override("font_color", Color("62dcd1"))
+	time_label.add_theme_font_size_override("font_size", 15)
 	seek = HSlider.new()
 	seek.min_value = 0.0
 	seek.max_value = 3.0
 	seek.step = 0.001
-	seek.custom_minimum_size.y = 30
+	seek.custom_minimum_size.y = 23
 	seek.value_changed.connect(_seek_to)
-	layout.add_child(seek)
+	timeline.add_child(seek)
+	var transport := _row(timeline)
+	for item in [["◀", -1.0], ["▶|", 1.0]]:
+		var step_sign: float = float(item[1])
+		var step_button := _make_button(str(item[0]), func(): _seek_by(step_sign / float(motion.fps)), transport)
+		step_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_button(step_button)
+	var add_key := _make_button("＋ キー", _insert_key, transport)
+	add_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(add_key, false, true)
+	var remove_key := _make_button("－ キー", _remove_key, transport)
+	remove_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(remove_key)
 	var key_scroll := ScrollContainer.new()
-	key_scroll.custom_minimum_size.y = 38
+	key_scroll.custom_minimum_size.y = 34
 	key_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	key_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	layout.add_child(key_scroll)
+	timeline.add_child(key_scroll)
 	key_row = _row(key_scroll)
-	var select_line := _row(layout)
-	_add_text(select_line, "編集部位：")
+
+	# The mode tabs remain visible; the large inspector is collapsible.
+	var editor := _panel(layout, Color("1d2c40"))
+	var editor_head := _row(editor)
+	var editor_title := _add_text(editor_head, "編集・設定", true)
+	editor_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	editor_toggle = _make_button("閉じる ▲", _toggle_editor, editor_head)
+	editor_toggle.custom_minimum_size.x = 92
+	_style_button(editor_toggle)
+	var tabs_scroll := ScrollContainer.new()
+	tabs_scroll.custom_minimum_size.y = 45
+	tabs_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	tabs_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	editor.add_child(tabs_scroll)
+	var tabs := _row(tabs_scroll)
+	for item in MODES:
+		var new_mode: String = item
+		var caption := "出力" if item == "書き出し" else item
+		var tab := _make_button(caption, func(): _change_mode(new_mode), tabs)
+		tab.custom_minimum_size.x = 82 if item != "モーション" else 100
+		mode_buttons[item] = tab
+		_style_button(tab, item == mode)
+	editor_body = VBoxContainer.new()
+	editor_body.add_theme_constant_override("separation", 5)
+	editor.add_child(editor_body)
+	var selectors := _row(editor_body)
+	var part_col := VBoxContainer.new()
+	part_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selectors.add_child(part_col)
+	var part_text := _add_text(part_col, "部位")
+	part_text.add_theme_font_size_override("font_size", 13)
 	part_picker = OptionButton.new()
+	part_picker.fit_to_longest_item = false
+	part_picker.clip_text = true
 	part_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	part_picker.custom_minimum_size.y = 40
 	part_picker.item_selected.connect(func(index: int):
 		selected_part = part_picker.get_item_text(index)
 		_refresh_inspector())
-	select_line.add_child(part_picker)
-	var animation_line := _row(layout)
-	_add_text(animation_line, "読込モーション：")
+	part_col.add_child(part_picker)
+	var anim_col := VBoxContainer.new()
+	anim_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selectors.add_child(anim_col)
+	var anim_text := _add_text(anim_col, "アニメーション")
+	anim_text.add_theme_font_size_override("font_size", 13)
 	animation_picker = OptionButton.new()
+	animation_picker.fit_to_longest_item = false
+	animation_picker.clip_text = true
 	animation_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	animation_picker.custom_minimum_size.y = 40
 	animation_picker.disabled = true
 	animation_picker.add_item("モデル読込後に選択")
 	animation_picker.item_selected.connect(func(index: int):
@@ -156,30 +265,69 @@ func _build_interface() -> void:
 		else:
 			var result: String = motion.load_bb_animation(index - 1)
 			_after_model_change(result))
-	animation_line.add_child(animation_picker)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size.y = 225
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	layout.add_child(scroll)
+	anim_col.add_child(animation_picker)
+	editor_scroll = ScrollContainer.new()
+	editor_scroll.custom_minimum_size.y = 167
+	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	editor_scroll.follow_focus = true
+	editor_body.add_child(editor_scroll)
 	inspector = VBoxContainer.new()
 	inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inspector.add_theme_constant_override("separation", 7)
-	scroll.add_child(inspector)
+	inspector.add_theme_constant_override("separation", 10)
+	editor_scroll.add_child(inspector)
+
 	message_label = _add_text(layout, "準備中")
+	message_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	message_label.clip_text = true
+	message_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	message_label.add_theme_font_size_override("font_size", 13)
-	message_label.custom_minimum_size.y = 20
+	message_label.add_theme_color_override("font_color", Color("b7c9db"))
+	message_label.custom_minimum_size.y = 19
+
+func _change_mode(new_mode: String) -> void:
+	if mode == new_mode and editor_body.visible:
+		return
+	mode = new_mode
+	editor_body.show()
+	editor_toggle.text = "閉じる ▲"
+	for name in mode_buttons:
+		_style_button(mode_buttons[name], name == mode)
+	_refresh_inspector()
+	editor_scroll.scroll_vertical = 0
+
+func _toggle_editor() -> void:
+	editor_body.visible = not editor_body.visible
+	editor_toggle.text = "閉じる ▲" if editor_body.visible else "開く ▼"
 
 func _show_help() -> void:
+	guide_step = 0
 	if help_popup == null:
 		help_popup = AcceptDialog.new()
-		help_popup.title = "Motion Studio かんたん操作ガイド"
-		help_popup.dialog_text = "最初は次の3つだけ試してください。\n\n①「BB読込」で .bbmodel を選択します（サンプルでも練習できます）。\n②「読込モーション」から動きを選び、「▶ 再生」を押します。\n③ モデルの脚などをタップして、下の値を変更します。\n\nキーフレームを増やすには、横長の時間スライダーを動かして「＋キー」を押します。\n\n右上の「モーション」をタップすると、作業モードが切り替わります。\n・モーション：部位の動きを編集\n・IK：足先などの目標位置を設定\n・制約：関節の角度・移動範囲を制限\n・接触：床や障害物との接触を確認\n・診断：不自然な動きを確認\n・書き出し：Godot向けに保存\n\n分からなくなったら右上の「使い方」を押してください。"
-		help_popup.ok_button_text = "操作してみる"
+		help_popup.title = "Motion Studio 操作ガイド"
+		help_popup.min_size = Vector2i(300, 170)
+		help_popup.confirmed.connect(_advance_help)
 		add_child(help_popup)
-	help_popup.popup_centered_ratio(0.9)
+	_display_help_step()
 	var file := FileAccess.open("user://motion_studio_guide_seen.txt", FileAccess.WRITE)
-	if file:
+	if file != null:
 		file.store_string("seen")
+
+func _display_help_step() -> void:
+	var pages := [
+		"1 / 3  モデルを読み込む\n\n上の「読込」を押し、端末の .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
+		"2 / 3  モーションを再生する\n\n「アニメーション」から動きを選択。\n上の「▶ 再生」で動作を確認します。",
+		"3 / 3  モーションを編集する\n\n3D画面の部位をタップして選択。\n下の編集パネルで位置・回転を変更します。"
+	]
+	help_popup.dialog_text = pages[guide_step]
+	help_popup.ok_button_text = "完了" if guide_step == 2 else "次へ"
+	help_popup.popup_centered(Vector2i(400, 220))
+
+func _advance_help() -> void:
+	if guide_step < 2:
+		guide_step += 1
+		call_deferred("_display_help_step")
 
 func _build_stage() -> void:
 	stage = Node3D.new()
@@ -444,14 +592,16 @@ func _refresh_inspector() -> void:
 		return
 	_clear_inspector()
 	var hints := {
-		"モーション": "① 再生または時間バーを動かす → ② 脚を選ぶ → ③ 数値を変更 → ④ ＋キーで保存",
-		"IK": "脚の先端を目標に合わせる機能です。目標位置や計算方法を設定します。",
-		"制約": "関節の曲がる範囲や、位置・伸縮の限界を設定します。",
-		"接触": "床やテスト用の箱・球を置いて、足先との接触を確認します。",
-		"診断": "関節・接地・IKの異常を確認します。",
-		"書き出し": "完成した動きをGodotで使うために出力します。"
+		"モーション": "部位を選び、位置・回転を変更",
+		"IK": "脚の目標位置や計算方法を設定",
+		"制約": "動かせる範囲を設定",
+		"接触": "箱や球を置いて接触をテスト",
+		"診断": "動作の問題を確認",
+		"書き出し": "Godot向けに出力"
 	}
-	_add_text(inspector, str(hints.get(mode, "")))
+	var hint := _add_text(inspector, str(hints.get(mode, "")))
+	hint.add_theme_font_size_override("font_size", 13)
+	hint.add_theme_color_override("font_color", Color("90b9cc"))
 	match mode:
 		"モーション": _inspector_motion()
 		"IK": _inspector_ik()
@@ -461,26 +611,35 @@ func _refresh_inspector() -> void:
 		"書き出し": _inspector_export()
 
 func _vector_fields(title: String, value: Vector3, low: float, high: float, step: float, changed: Callable) -> void:
-	_add_text(inspector, title)
-	var line := _row(inspector)
+	var group := VBoxContainer.new()
+	group.add_theme_constant_override("separation", 3)
+	inspector.add_child(group)
+	var title_label := _add_text(group, title)
+	title_label.add_theme_color_override("font_color", Color("cfe3f5"))
+	var axes := _row(group)
 	for axis in range(3):
-		_add_text(line, ["X", "Y", "Z"][axis])
+		var axis_index: int = axis
+		var column := VBoxContainer.new()
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		axes.add_child(column)
+		var name_label := _add_text(column, ["X", "Y", "Z"][axis])
+		name_label.add_theme_font_size_override("font_size", 13)
 		var spin := SpinBox.new()
 		spin.min_value = low
 		spin.max_value = high
 		spin.step = step
-		spin.allow_greater = false
-		spin.allow_lesser = false
 		spin.value = value[axis]
 		spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		spin.value_changed.connect(func(v: float): changed.call(axis, v))
-		line.add_child(spin)
+		spin.custom_minimum_size = Vector2(0, 42)
+		spin.value_changed.connect(func(v: float): changed.call(axis_index, v))
+		column.add_child(spin)
 
 func _number_field(label: String, initial: float, low: float, high: float, step: float, changed: Callable) -> void:
 	var line := _row(inspector)
 	var text_label := _add_text(line, label)
-	text_label.custom_minimum_size.x = 120
+	text_label.add_theme_font_size_override("font_size", 14)
 	var number := SpinBox.new()
+	number.custom_minimum_size = Vector2(140, 42)
 	number.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	number.min_value = low
 	number.max_value = high
@@ -493,6 +652,7 @@ func _check(label: String, checked: bool, changed: Callable) -> void:
 	var check := CheckBox.new()
 	check.text = label
 	check.button_pressed = checked
+	check.custom_minimum_size.y = 44
 	check.toggled.connect(changed)
 	inspector.add_child(check)
 
