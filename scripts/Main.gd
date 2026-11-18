@@ -15,6 +15,8 @@ var time_label: Label
 var message_label: Label
 var part_picker: OptionButton
 var mode_picker: OptionButton
+var animation_picker: OptionButton
+var camera_focus: Vector3 = Vector3(0, 1.05, 0)
 var play_button: Button
 var help_popup: AcceptDialog
 var selected_part: String = "胴体"
@@ -39,6 +41,7 @@ func _ready() -> void:
 	motion.setup(rig)
 	motion.add_sample_animation()
 	_refresh_part_picker()
+	_populate_animation_picker(false)
 	_refresh_inspector()
 	_refresh_key_buttons()
 	_update_timeline()
@@ -140,6 +143,20 @@ func _build_interface() -> void:
 		selected_part = part_picker.get_item_text(index)
 		_refresh_inspector())
 	select_line.add_child(part_picker)
+	var animation_line := _row(layout)
+	_add_text(animation_line, "読込モーション：")
+	animation_picker = OptionButton.new()
+	animation_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	animation_picker.disabled = true
+	animation_picker.add_item("モデル読込後に選択")
+	animation_picker.item_selected.connect(func(index: int):
+		if index == 0:
+			motion.setup(rig)
+			_after_model_change("基本姿勢を表示しています。")
+		else:
+			var result: String = motion.load_bb_animation(index - 1)
+			_after_model_change(result))
+	animation_line.add_child(animation_picker)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 225
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -225,7 +242,7 @@ func _build_stage() -> void:
 	rig.create_sample()
 
 func _update_camera() -> void:
-	var center := Vector3(0, 1.05, 0)
+	var center := camera_focus
 	camera.position = center + Vector3(
 		sin(camera_yaw) * cos(camera_pitch), sin(camera_pitch), cos(camera_yaw) * cos(camera_pitch)) * camera_distance
 	camera.look_at(center, Vector3.UP)
@@ -250,7 +267,8 @@ func _file_dialog(kind: String) -> void:
 	picker.use_native_dialog = OS.has_feature("mobile")
 	picker.file_mode = FileDialog.FILE_MODE_OPEN_FILE if kind != "export" and kind != "save_as" else FileDialog.FILE_MODE_SAVE_FILE
 	if kind == "import":
-		picker.add_filter("*.bbmodel", "Blockbenchモデル")
+		picker.add_filter("*.bbmodel,*.json", "Blockbenchモデル")
+		picker.add_filter("*.*", "すべてのファイル")
 		picker.add_filter("*.glb,*.gltf", "glTFモデル")
 	elif kind == "open":
 		picker.add_filter("*.json", "Motion Studio保存データ")
@@ -263,6 +281,8 @@ func _file_dialog(kind: String) -> void:
 			"import": _import_model(path)
 			"open":
 				var result := motion.load_project(path)
+				_populate_animation_picker(false)
+				_fit_import_camera()
 				_after_model_change(result)
 			"save_as": _note(motion.save_project(path))
 			"export": _note(motion.export_animation_tres(path))
@@ -272,20 +292,69 @@ func _file_dialog(kind: String) -> void:
 	picker.popup_centered_ratio(0.92)
 
 func _import_model(path: String) -> void:
-	var error := ""
-	if path.to_lower().ends_with(".bbmodel"):
-		error = rig.load_bbmodel(path)
-	elif path.to_lower().ends_with(".gltf") or path.to_lower().ends_with(".glb"):
-		error = rig.load_gltf(path)
+	var lower := path.to_lower().uri_decode()
+	var issue := ""
+	if lower.contains(".glb") or lower.contains(".gltf"):
+		issue = rig.load_gltf(path)
 	else:
-		error = "対応していない拡張子です"
-	if error != "":
-		_note("読み込みに失敗：" + error)
+		# Android SAF may return content:// URIs without a visible extension.
+		issue = rig.load_bbmodel(path)
+	if issue != "":
+		_note("読み込みに失敗：" + issue)
 		return
 	motion.setup(rig)
+	_populate_animation_picker(true)
 	selected_part = rig.parts.keys()[0] if not rig.parts.is_empty() else ""
 	selected_chain = 0
-	_after_model_change("モデルを読み込みました。IKチェーンはIK画面で設定できます。")
+	_fit_import_camera()
+	var summary := "%d部位、%dモーション" % [rig.parts.size(), rig.bb_animations.size()]
+	if not rig.bb_import_warnings.is_empty():
+		summary += "（テクスチャ等の注意 %d件）" % rig.bb_import_warnings.size()
+	_after_model_change("Blockbenchモデルを読み込みました：" + summary)
+
+func _populate_animation_picker(auto_apply: bool) -> void:
+	if animation_picker == null:
+		return
+	animation_picker.clear()
+	animation_picker.add_item("基本姿勢（モーションなし）")
+	for animation in rig.bb_animations:
+		animation_picker.add_item(str(animation.get("name", "名前なし")))
+	animation_picker.disabled = rig.bb_animations.is_empty()
+	var selected := 0
+	if auto_apply and not rig.bb_animations.is_empty():
+		selected = 1
+		for i in range(rig.bb_animations.size()):
+			if float(rig.bb_animations[i].get("length", 0.0)) > 0.01:
+				selected = i + 1
+				break
+		motion.load_bb_animation(selected - 1)
+	animation_picker.select(selected)
+
+func _fit_import_camera() -> void:
+	if rig.model_root == null:
+		return
+	var stack: Array = [rig.model_root]
+	var box := AABB()
+	var found := false
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D and node.mesh != null:
+			var bound: AABB = node.get_aabb()
+			for dx in [0.0, 1.0]:
+				for dy in [0.0, 1.0]:
+					for dz in [0.0, 1.0]:
+						var point: Vector3 = node.to_global(bound.position + bound.size * Vector3(dx, dy, dz))
+						if not found:
+							box = AABB(point, Vector3.ZERO)
+							found = true
+						else:
+							box = box.expand(point)
+		for child in node.get_children():
+			stack.append(child)
+	if found:
+		camera_focus = box.get_center()
+		camera_distance = clampf(box.size.length() * 1.6, 3.0, 35.0)
+		_update_camera()
 
 func _after_model_change(note: String) -> void:
 	playing = false
