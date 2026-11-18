@@ -7,6 +7,7 @@ var rest: Dictionary = {}                  # name -> numeric pose
 var chains: Array = []                    # root/mid/end/target/method settings
 var test_objects: Array = []
 var imported_source: String = "sample"
+var bb_legacy_axes: bool = false
 var bb_animations: Array = []
 var bb_uuid_to_name: Dictionary = {}
 var bb_import_warnings: Array[String] = []
@@ -31,6 +32,7 @@ func _clear_model() -> void:
 	chains.clear()
 	test_objects.clear()
 	_unique_names.clear()
+	bb_legacy_axes = false
 	bb_animations.clear()
 	bb_uuid_to_name.clear()
 	bb_import_warnings.clear()
