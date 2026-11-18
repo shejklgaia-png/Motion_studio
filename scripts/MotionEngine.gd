@@ -329,7 +329,8 @@ func _solve_chain(chain: Dictionary) -> void:
 	var original_mid: Quaternion = mid.quaternion
 	match chain.get("method", "CCD"):
 		"FABRIK": _solve_fabrik(root, mid, end, tip, target.global_position)
-		"2ボーン": _solve_ccd(root, mid, end, tip, target.global_position, 14)
+		"2ボーン": _solve_two_bone(root, mid, end, tip, target.global_position,
+			MotionRig.from_array(chain.get("pole", [0.0, 0.0, 1.0])))
 		_: _solve_ccd(root, mid, end, tip, target.global_position, 8)
 	root.quaternion = original_root.slerp(root.quaternion, weight)
 	mid.quaternion = original_mid.slerp(mid.quaternion, weight)
@@ -341,14 +342,59 @@ func _solve_chain(chain: Dictionary) -> void:
 func _rotate_toward(node: Node3D, source: Vector3, dest: Vector3, max_angle: float = PI) -> void:
 	if source.length_squared() < 0.000001 or dest.length_squared() < 0.000001:
 		return
-	var a := source.normalized()
-	var b := dest.normalized()
-	var axis := a.cross(b)
+	var a: Vector3 = source.normalized()
+	var b: Vector3 = dest.normalized()
+	var axis: Vector3 = a.cross(b)
+	var alignment: float = clampf(a.dot(b), -1.0, 1.0)
 	if axis.length_squared() < 0.000001:
-		return
-	var turn := minf(acos(clampf(a.dot(b), -1.0, 1.0)), max_angle)
+		if alignment > 0.0:
+			return
+		# Antiparallel vectors still need a deterministic 180-degree rotation.
+		var alternative: Vector3 = Vector3.UP if absf(a.dot(Vector3.UP)) < 0.85 else Vector3.RIGHT
+		axis = a.cross(alternative).normalized()
+	var turn: float = minf(acos(alignment), max_angle)
 	var old := node.global_transform
 	node.global_transform = Transform3D(Basis(axis.normalized(), turn) * old.basis, old.origin)
+
+# Analytic world-space two-link IK (law of cosines), with a pole direction.
+# The links are root->mid and mid->end effector; no bone lengths are modified.
+# Pole represents a world-space direction from the root toward the desired knee.
+func _solve_two_bone(root: Node3D, mid: Node3D, end: Node3D,
+		tip: Vector3, target: Vector3, pole: Vector3) -> void:
+	var p0: Vector3 = root.global_position
+	var p1: Vector3 = mid.global_position
+	var p2: Vector3 = end.to_global(tip)
+	var upper_len: float = p0.distance_to(p1)
+	var lower_len: float = p1.distance_to(p2)
+	if upper_len < 0.00001 or lower_len < 0.00001:
+		return
+	var to_goal: Vector3 = target - p0
+	var wanted_distance: float = to_goal.length()
+	var direction: Vector3 = to_goal.normalized() if wanted_distance > 0.00001 else (p2 - p0).normalized()
+	if direction.length_squared() < 0.00001:
+		direction = Vector3.FORWARD
+	# A two-link limb reaches only within |L1-L2| ... (L1+L2).
+	# Keep epsilon at either singularity for a stable bend normal.
+	var minimum: float = absf(upper_len - lower_len) + 0.000001
+	var maximum: float = upper_len + lower_len - 0.000001
+	var distance: float = clampf(wanted_distance, minimum, maximum)
+	var reachable_tip: Vector3 = p0 + direction * distance
+	var knee_direction: Vector3 = pole - direction * pole.dot(direction)
+	if knee_direction.length_squared() < 0.000001:
+		var prior: Vector3 = p1 - p0
+		knee_direction = prior - direction * prior.dot(direction)
+	if knee_direction.length_squared() < 0.000001:
+		var reference: Vector3 = Vector3.UP if absf(direction.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+		knee_direction = reference - direction * reference.dot(direction)
+	knee_direction = knee_direction.normalized()
+	var projection: float = (distance * distance + upper_len * upper_len - lower_len * lower_len) / (2.0 * distance)
+	var height: float = sqrt(maxf(0.0, upper_len * upper_len - projection * projection))
+	var desired_knee: Vector3 = p0 + direction * projection + knee_direction * height
+	_rotate_toward(root, p1 - p0, desired_knee - p0)
+	# Root rotation moved the knee and tip; now rotate the knee's lower segment
+	# to the point specified by the 2-link geometric solution.
+	var current_tip: Vector3 = end.to_global(tip)
+	_rotate_toward(mid, current_tip - mid.global_position, reachable_tip - mid.global_position)
 
 func _solve_ccd(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target: Vector3, iterations: int) -> void:
 	for _iter in range(iterations):
