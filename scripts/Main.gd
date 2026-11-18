@@ -6,6 +6,14 @@ var motion: MotionEngine
 var stage: Node3D
 var viewport: SubViewport
 var preview_container: SubViewportContainer
+var preview_frame: Control
+var preview_tools_panel: PanelContainer
+var file_menu: MenuButton
+var active_touches: Dictionary = {}
+var pinch_active: bool = false
+var pinch_distance: float = 0.0
+var touch_blocked_until_release: bool = false
+var suppress_mouse_until_ms: int = 0
 var camera: Camera3D
 var floor_area: StaticBody3D
 var motion_gizmo: MotionGizmo
@@ -143,11 +151,22 @@ func _build_interface() -> void:
 	help_button.tooltip_text = "短い3ステップ操作ガイド"
 
 	var toolbar := _row(layout)
-	for entry in [["読込", "import"], ["保存", "save"]]:
-		var action: String = entry[1]
-		var button := _make_button(entry[0], func(): _toolbar_action(action), toolbar)
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_style_button(button, action == "import", action == "import")
+	file_menu = MenuButton.new()
+	file_menu.text = "ファイル ▾"
+	file_menu.custom_minimum_size.y = 44
+	file_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toolbar.add_child(file_menu)
+	_style_button(file_menu, false, true)
+	var file_popup: PopupMenu = file_menu.get_popup()
+	file_popup.add_item("モデルを読み込む（bbmodel / glb）", 10)
+	file_popup.add_separator()
+	file_popup.add_item("プロジェクトを開く", 11)
+	file_popup.add_item("プロジェクトを保存", 12)
+	file_popup.add_item("別名で保存", 13)
+	file_popup.add_separator()
+	file_popup.add_item("Godotアニメーションを書き出す", 14)
+	file_popup.id_pressed.connect(_on_file_menu_action)
+
 	play_button = _make_button("▶ 再生", _toggle_playback, toolbar)
 	play_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(play_button, false, true)
@@ -158,15 +177,19 @@ func _build_interface() -> void:
 	toolbar.add_child(more)
 	_style_button(more)
 	var popup := more.get_popup()
-	for item in [["プロジェクトを開く", 1], ["Godotへ出力", 2], ["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
+	for item in [["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
 		popup.add_item(str(item[0]), int(item[1]))
 	popup.id_pressed.connect(_on_more_action)
 
+	preview_frame = Control.new()
+	preview_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preview_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	preview_frame.custom_minimum_size = Vector2(0, 220)
+	layout.add_child(preview_frame)
 	preview_container = SubViewportContainer.new()
 	preview_container.stretch = true
-	preview_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	preview_container.custom_minimum_size = Vector2(0, 200)
-	layout.add_child(preview_container)
+	preview_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview_frame.add_child(preview_container)
 	preview_container.gui_input.connect(_viewport_input)
 	viewport = SubViewport.new()
 	viewport.size = Vector2i(480, 520)
@@ -174,26 +197,36 @@ func _build_interface() -> void:
 	viewport.own_world_3d = true
 	preview_container.add_child(viewport)
 
-	# The transform buttons act on the selected joint, not on the entire model.
-	# Zoom + / - and camera pan are independent of keyframe editing.
-	var tools := _row(layout)
-	for tool_name in ["回転", "移動", "拡縮"]:
+	# Transform tool switches float at the lower-right corner of the preview.
+	preview_tools_panel = PanelContainer.new()
+	preview_tools_panel.anchor_left = 1.0
+	preview_tools_panel.anchor_top = 1.0
+	preview_tools_panel.anchor_right = 1.0
+	preview_tools_panel.anchor_bottom = 1.0
+	preview_tools_panel.offset_left = -103.0
+	preview_tools_panel.offset_top = -169.0
+	preview_tools_panel.offset_right = -8.0
+	preview_tools_panel.offset_bottom = -8.0
+	var overlay_style := StyleBoxFlat.new()
+	overlay_style.bg_color = Color(0.07, 0.12, 0.20, 0.86)
+	overlay_style.set_corner_radius_all(10)
+	overlay_style.set_content_margin_all(5)
+	preview_tools_panel.add_theme_stylebox_override("panel", overlay_style)
+	preview_frame.add_child(preview_tools_panel)
+	var tools := VBoxContainer.new()
+	tools.add_theme_constant_override("separation", 4)
+	preview_tools_panel.add_child(tools)
+	for tool_name in ["回転", "移動"]:
 		var tool_id: String = tool_name
 		var tool_button := _make_button(tool_name, func(): _choose_transform(tool_id), tools)
-		tool_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tool_button.custom_minimum_size = Vector2(79, 44)
 		tool_buttons[tool_id] = tool_button
 		_style_button(tool_button, tool_id == active_transform)
 	pan_button = _make_button("視点移動", _toggle_view_pan, tools)
-	pan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pan_button.custom_minimum_size = Vector2(79, 44)
 	_style_button(pan_button)
-	var zoom_out := _make_button("－", func(): _zoom(1.2), tools)
-	zoom_out.custom_minimum_size.x = 46
-	_style_button(zoom_out)
-	var zoom_in := _make_button("＋", func(): _zoom(1.0 / 1.2), tools)
-	zoom_in.custom_minimum_size.x = 46
-	_style_button(zoom_in)
 
-	var guide := _add_text(layout, "関節タップ → 赤X・緑Y・青Zの円をドラッグして編集")
+	var guide := _add_text(layout, "2本指で拡大・縮小 ／ 右下で編集操作を切替")
 	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
 	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
@@ -312,10 +345,16 @@ func _build_interface() -> void:
 	message_label.add_theme_color_override("font_color", Color("b7c9db"))
 	message_label.custom_minimum_size.y = 19
 
+func _on_file_menu_action(id: int) -> void:
+	match id:
+		10: _toolbar_action("import")
+		11: _toolbar_action("open")
+		12: _toolbar_action("save")
+		13: _file_dialog("save_as")
+		14: _file_dialog("export")
+
 func _on_more_action(id: int) -> void:
 	match id:
-		1: _toolbar_action("open")
-		2: _toolbar_action("export")
 		3: _toolbar_action("undo")
 		4: _toolbar_action("redo")
 		5: _show_help()
@@ -377,9 +416,9 @@ func _show_help() -> void:
 
 func _display_help_step() -> void:
 	var pages := [
-		"1 / 3  モデルを読み込む\n\n上の「読込」を押し、端末の .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
+		"1 / 3  モデルを読み込む\n\n上の「ファイル」→「モデルを読み込む」で .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
 		"2 / 3  モーションを再生する\n\n「アニメーション」から動きを選択。\n上の「▶ 再生」で動作を確認します。",
-		"3 / 3  モーションを編集する\n\n3D画面の部位をタップして選択。\n下の編集パネルで位置・回転を変更します。"
+		"3 / 3  モーションを編集する\n\n3D画面の部位をタップして選択。\n右下の「回転」「移動」を選んで操作します。2本指のピンチで表示を拡大・縮小できます。"
 	]
 	help_popup.dialog_text = pages[guide_step]
 	help_popup.ok_button_text = "完了" if guide_step == 2 else "次へ"
