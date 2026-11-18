@@ -23,6 +23,7 @@ func _verify() -> void:
 	var undo_btn: Button = app.get("undo_button")
 	var redo_btn: Button = app.get("redo_button")
 	var fit_btn: Button = app.get("fit_button")
+	app.call("_fit_import_camera")
 	var camera_distance: float = float(app.get("camera_distance"))
 	var gizmo: MotionGizmo = app.get("motion_gizmo")
 	if undo_btn == null or redo_btn == null or fit_btn == null or gizmo == null:
@@ -85,6 +86,12 @@ func _verify() -> void:
 	app.call("_toolbar_action", "redo")
 	if not _has_time(engine.frames, destination) or _has_time(engine.frames, start):
 		_fail("Visible redo did not restore the key move")
+		return
+	app.call("_seek_to", 2.4)
+	var history_size: int = engine.history.size()
+	app.call("_remove_key")
+	if engine.history.size() != history_size or not str(app.get("message_label").text).contains("削除できるキー"):
+		_fail("Empty-space delete should be harmless and explanatory")
 		return
 	var end_time: float = engine.duration
 	if engine.move_keyframe(0.0, 1.0) or engine.move_keyframe(end_time, 2.7):
