@@ -105,7 +105,20 @@ func _run() -> void:
 	if bool(bad_fps.get("ok", false)):
 		_fail("Unsupported fps was not rejected")
 		return
-	print("MOTION BAKE PASS: 30fps FK keys, source backup, runtime IK off, stable targets, export, restore")
+	var sixty: Dictionary = engine.bake_ik_fk(60)
+	if not bool(sixty.get("ok", false)) or engine.frames.size() != 181 or engine.fps != 60:
+		_fail("60fps IK/FK baking failed")
+		return
+	if bool(rig.chains[0]["enabled"]):
+		_fail("60fps baking left IK active")
+		return
+	if not engine.undo():
+		_fail("Undo after 60fps bake failed")
+		return
+	if engine.frames.size() != original_count or not bool(rig.chains[0]["enabled"]):
+		_fail("Undo did not restore original IK animation")
+		return
+	print("MOTION BAKE PASS: 30/60fps FK keys, source backup, runtime IK off, stable targets, export, restore, undo")
 	quit(0)
 
 func _fail(message: String) -> void:
