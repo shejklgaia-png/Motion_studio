@@ -91,7 +91,11 @@ func _verify() -> void:
 	rig.chains[0]["target"].global_position += Vector3(0.9, 0.0, 0.9)
 	engine.evaluate(0.5)
 	if stored_quat.angle_to(rig.parts[chain["root"]].quaternion) > 0.0001:
-		_fail("Baked 2-bone FK still depends on target")
+		_fail("Baked 2-bone FK still depends on target: angle=" +
+			str(stored_quat.angle_to(rig.parts[chain["root"]].quaternion)) +
+			" enabled=" + str(rig.chains[0]["enabled"]) +
+			" before=" + str(stored_quat) +
+			" after=" + str(rig.parts[chain["root"]].quaternion))
 		return
 	if not engine.restore_bake_source():
 		_fail("Cannot restore pre-bake 2-bone IK motion")
