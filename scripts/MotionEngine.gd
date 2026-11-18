@@ -492,9 +492,9 @@ func capture_key(at_time: float) -> void:
 	_insert_frame(t, poses)
 	evaluate(t)
 
-func delete_key(at_time: float) -> void:
+func delete_key(at_time: float) -> bool:
 	if frames.size() <= 2:
-		return
+		return false
 	var index := -1
 	var best := 9999.0
 	for i in range(frames.size()):
@@ -502,9 +502,14 @@ func delete_key(at_time: float) -> void:
 		if delta < best:
 			best = delta
 			index = i
-	if index >= 0 and best < 0.04 and float(frames[index]["time"]) != 0.0 and float(frames[index]["time"]) != duration:
-		frames.remove_at(index)
-		evaluate(at_time)
+	if index < 0 or best >= 0.04:
+		return false
+	if absf(float(frames[index]["time"])) < 0.0005 or absf(float(frames[index]["time"]) - duration) < 0.0005:
+		return false
+	record_undo()
+	frames.remove_at(index)
+	evaluate(at_time)
+	return true
 
 # Move a whole keyframe to another time. Motion Studio currently stores one
 # full-body pose per time, so this intentionally moves the whole frame rather
