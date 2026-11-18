@@ -518,6 +518,7 @@ func _change_mode(new_mode: String) -> void:
 	_refresh_action_hint()
 	_update_gizmo()
 	editor_scroll.scroll_vertical = 0
+	_refresh_contact_markers()
 
 func _toggle_key_list() -> void:
 	key_scroll.visible = not key_scroll.visible
@@ -531,7 +532,7 @@ func _refresh_action_hint() -> void:
 		"モーション": "黄色い◆で時間選択／ドラッグでキー移動 → 関節を回転",
 		"IK": "足先の目標点を選び、ドラッグして位置を設定",
 		"制約": "関節を選び、動かせる角度や範囲を設定",
-		"接触": "床・箱・球との接触を確認",
+		"接触": "足先の床固定・滑走・物体追従を設定",
 		"診断": "エラーと接地状態を確認",
 		"ベイク": "IKを計算した動きを普通のキーに変換"
 	}
@@ -765,6 +766,7 @@ func _after_model_change(note: String) -> void:
 	_update_timeline()
 	_update_gizmo()
 	_refresh_action_hint()
+	_refresh_contact_markers()
 	_note(note)
 
 func _refresh_part_picker() -> void:
