@@ -506,6 +506,37 @@ func delete_key(at_time: float) -> void:
 		frames.remove_at(index)
 		evaluate(at_time)
 
+# Move a whole keyframe to another time. Motion Studio currently stores one
+# full-body pose per time, so this intentionally moves the whole frame rather
+# than pretending that each track has independent timing.
+func move_keyframe(from_time: float, requested_time: float) -> bool:
+	if frames.size() < 3:
+		return false
+	var original_index: int = -1
+	for i in range(frames.size()):
+		if absf(float(frames[i]["time"]) - from_time) < 0.0006:
+			original_index = i
+			break
+	if original_index < 0 or original_index == 0 or original_index == frames.size() - 1:
+		return false
+	var current_time: float = float(frames[original_index]["time"])
+	var new_time: float = snappedf(clampf(requested_time, 0.0, duration), 1.0 / float(maxi(1, fps)))
+	if new_time < 0.0005 or new_time > duration - 0.0005:
+		return false
+	if absf(new_time - current_time) < 0.0005:
+		return false
+	for i in range(frames.size()):
+		if i != original_index and absf(float(frames[i]["time"]) - new_time) < 0.0006:
+			return false
+	record_undo()
+	var moved: Dictionary = frames[original_index].duplicate(true)
+	moved["time"] = new_time
+	frames.remove_at(original_index)
+	frames.append(moved)
+	_ensure_sorted()
+	evaluate(new_time)
+	return true
+
 func _insert_frame(t: float, poses: Dictionary) -> void:
 	for i in range(frames.size()):
 		if absf(float(frames[i]["time"]) - t) < 0.0005:
