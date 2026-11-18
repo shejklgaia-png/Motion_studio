@@ -217,7 +217,7 @@ func _build_interface() -> void:
 	var tabs := _row(tabs_scroll)
 	for item in MODES:
 		var new_mode: String = item
-		var caption := "出力" if item == "書き出し" else item
+		var caption: String = "出力" if item == "書き出し" else str(item)
 		var tab := _make_button(caption, func(): _change_mode(new_mode), tabs)
 		tab.custom_minimum_size.x = 82 if item != "モーション" else 100
 		mode_buttons[item] = tab
