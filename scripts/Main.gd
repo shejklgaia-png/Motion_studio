@@ -268,7 +268,8 @@ func _build_interface() -> void:
 	part_picker.custom_minimum_size.y = 40
 	part_picker.item_selected.connect(func(index: int):
 		selected_part = part_picker.get_item_text(index)
-		_refresh_inspector())
+		_refresh_inspector()
+		_update_gizmo())
 	part_col.add_child(part_picker)
 	var anim_col := VBoxContainer.new()
 	anim_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
