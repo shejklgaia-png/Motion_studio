@@ -697,6 +697,8 @@ func _inspector_ik() -> void:
 	_add_text(inspector, "IKチェーンと目標点", true)
 	var row := _row(inspector)
 	var chain_select := OptionButton.new()
+	chain_select.fit_to_longest_item = false
+	chain_select.clip_text = true
 	
 	chain_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for chain in rig.chains:
@@ -717,6 +719,8 @@ func _inspector_ik() -> void:
 	var calculation := _row(inspector)
 	_add_text(calculation, "計算方法")
 	var method_select := OptionButton.new()
+	method_select.fit_to_longest_item = false
+	method_select.clip_text = true
 	
 	for method_name in ["CCD", "FABRIK", "2ボーン"]:
 		method_select.add_item(method_name)
@@ -729,6 +733,8 @@ func _inspector_ik() -> void:
 		var line := _row(inspector)
 		_add_text(line, item[1])
 		var picker := OptionButton.new()
+		picker.fit_to_longest_item = false
+		picker.clip_text = true
 		
 		picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		for joint_name in rig.parts.keys():
@@ -824,6 +830,8 @@ func _inspector_contacts() -> void:
 		_refresh_inspector(), top)
 	if not rig.test_objects.is_empty():
 		var choices := OptionButton.new()
+		choices.fit_to_longest_item = false
+		choices.clip_text = true
 	
 		for test in rig.test_objects:
 			choices.add_item(str(test["node"].name))
