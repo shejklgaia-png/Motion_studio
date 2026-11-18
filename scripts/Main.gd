@@ -322,9 +322,9 @@ func _build_interface() -> void:
 	var tabs := _row(tabs_scroll)
 	for item in ["階層", "モーション", "IK"]:
 		var current_mode: String = item
-		var caption: String = {"階層":"① 部位", "モーション":"② 動き編集", "IK":"③ IK"}[item]
+		var caption: String = {"階層":"部位・階層", "モーション":"動きを編集", "IK":"IK設定"}[item]
 		var tab := _make_button(caption, func(): _change_mode(current_mode), tabs)
-		tab.custom_minimum_size.x = 85 if item != "モーション" else 112
+		tab.custom_minimum_size.x = 90 if item != "モーション" else 116
 		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mode_buttons[item] = tab
 		_style_button(tab, item == mode)
