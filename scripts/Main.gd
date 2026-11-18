@@ -1064,49 +1064,110 @@ func _camera_screen_position(position: Vector2) -> Vector2:
 	var dimensions := Vector2(maxf(preview_container.size.x, 1.0), maxf(preview_container.size.y, 1.0))
 	return Vector2(position.x * float(viewport.size.x) / dimensions.x, position.y * float(viewport.size.y) / dimensions.y)
 
+func _finish_pointer_drag() -> void:
+	if drag_axis >= 0:
+		_refresh_key_buttons()
+		_refresh_inspector()
+		drag_axis = -1
+		_update_gizmo()
+	dragging_object = false
+	pointer_down = false
+
+func _begin_pointer(position: Vector2) -> void:
+	pointer_down = true
+	if _start_transform_drag(position):
+		return
+	_pick_from_screen(position)
+
+func _move_pointer(position: Vector2, relative: Vector2) -> void:
+	if not pointer_down:
+		return
+	if drag_axis >= 0:
+		_drag_transform(position)
+	elif dragging_object and mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
+		var target: Node3D = rig.chains[selected_chain]["target"]
+		target.global_position = _plane_position(position, target.global_position.y)
+		motion.evaluate(motion.play_time)
+	elif dragging_object and mode == "接触" and selected_test >= 0 and selected_test < rig.test_objects.size():
+		var obstacle: Node3D = rig.test_objects[selected_test]["node"]
+		obstacle.position = _plane_position(position, obstacle.position.y)
+	elif pan_view:
+		var units: float = camera_distance * tan(deg_to_rad(camera.fov) * 0.5) * 2.0 / maxf(1.0, float(viewport.size.y))
+		camera_focus -= (camera.global_transform.basis.x * relative.x + camera.global_transform.basis.y * relative.y) * units
+		_update_camera()
+	else:
+		camera_yaw -= relative.x * 0.008
+		camera_pitch = clampf(camera_pitch + relative.y * 0.007, -0.2, 1.3)
+		_update_camera()
+
+func _pinch_separation() -> float:
+	if active_touches.size() < 2:
+		return 0.0
+	var indices: Array = active_touches.keys()
+	var first: Vector2 = active_touches[indices[0]]
+	var second: Vector2 = active_touches[indices[1]]
+	return first.distance_to(second)
+
+func _on_screen_touch(event: InputEventScreenTouch) -> void:
+	suppress_mouse_until_ms = Time.get_ticks_msec() + 200
+	if event.pressed:
+		active_touches[event.index] = _camera_screen_position(event.position)
+		if active_touches.size() >= 2:
+			# Pinch always changes the preview camera zoom, never the model's scale.
+			# Stop any one-finger joint manipulation before beginning two-finger zoom.
+			_finish_pointer_drag()
+			pinch_active = true
+			touch_blocked_until_release = true
+			pinch_distance = _pinch_separation()
+		elif not touch_blocked_until_release:
+			_begin_pointer(_camera_screen_position(event.position))
+	else:
+		active_touches.erase(event.index)
+		if active_touches.size() < 2:
+			pinch_active = false
+			pinch_distance = 0.0
+		if active_touches.is_empty():
+			_finish_pointer_drag()
+			touch_blocked_until_release = false
+
+func _on_screen_drag(event: InputEventScreenDrag) -> void:
+	suppress_mouse_until_ms = Time.get_ticks_msec() + 200
+	if not active_touches.has(event.index):
+		return
+	active_touches[event.index] = _camera_screen_position(event.position)
+	if pinch_active and active_touches.size() >= 2:
+		var current_gap: float = _pinch_separation()
+		if pinch_distance > 8.0 and current_gap > 8.0:
+			_zoom(clampf(pinch_distance / current_gap, 0.75, 1.35))
+		pinch_distance = current_gap
+	elif active_touches.size() == 1 and not touch_blocked_until_release:
+		_move_pointer(_camera_screen_position(event.position), _camera_screen_position(event.relative))
+
 func _viewport_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		_on_screen_touch(event)
+		return
+	if event is InputEventScreenDrag:
+		_on_screen_drag(event)
+		return
+	if event is InputEventMagnifyGesture:
+		_zoom(1.0 / maxf(0.1, event.factor))
+		return
+	# Android may synthesize mouse events for the same touch; ignore duplicates.
+	if Time.get_ticks_msec() < suppress_mouse_until_ms:
+		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_zoom(1.0 / 1.12)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			_zoom(1.12)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			pointer_down = event.pressed
-			if pointer_down:
-				var point: Vector2 = _camera_screen_position(event.position)
-				if _start_transform_drag(point):
-					return
-				_pick_from_screen(point)
+			if event.pressed:
+				_begin_pointer(_camera_screen_position(event.position))
 			else:
-				if drag_axis >= 0:
-					_refresh_key_buttons()
-					_refresh_inspector()
-					drag_axis = -1
-					_update_gizmo()
-				dragging_object = false
+				_finish_pointer_drag()
 	elif event is InputEventMouseMotion and pointer_down:
-		var pos: Vector2 = _camera_screen_position(event.position)
-		if drag_axis >= 0:
-			_drag_transform(pos)
-		elif dragging_object and mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
-			var target: Node3D = rig.chains[selected_chain]["target"]
-			target.global_position = _plane_position(pos, target.global_position.y)
-			motion.evaluate(motion.play_time)
-		elif dragging_object and mode == "接触" and selected_test >= 0 and selected_test < rig.test_objects.size():
-			var obstacle: Node3D = rig.test_objects[selected_test]["node"]
-			obstacle.position = _plane_position(pos, obstacle.position.y)
-		elif pan_view:
-			var units: float = camera_distance * tan(deg_to_rad(camera.fov) * 0.5) * 2.0 / maxf(1.0, float(viewport.size.y))
-			var delta_screen: Vector2 = _camera_screen_position(event.relative)
-			camera_focus -= (camera.global_transform.basis.x * delta_screen.x + camera.global_transform.basis.y * delta_screen.y) * units
-			_update_camera()
-		else:
-			var relative: Vector2 = _camera_screen_position(event.relative)
-			camera_yaw -= relative.x * 0.008
-			camera_pitch = clampf(camera_pitch + relative.y * 0.007, -0.2, 1.3)
-			_update_camera()
-	elif event is InputEventMagnifyGesture:
-		_zoom(1.0 / maxf(0.1, event.factor))
+		_move_pointer(_camera_screen_position(event.position), _camera_screen_position(event.relative))
 
 func _start_transform_drag(point: Vector2) -> bool:
 	if mode != "モーション" or pan_view or not rig.parts.has(selected_part) or playing:
