@@ -707,20 +707,15 @@ func restore(data: Dictionary) -> void:
 	evaluate(float(data.get("time", 0.0)))
 
 func save_project(path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
-		return "保存できません：" + str(FileAccess.get_open_error())
-	file.store_string(JSON.stringify(snapshot(), "  "))
-	file.close()
+	if not MotionProjectStorage.save_snapshot(path, snapshot()):
+		return "保存できません：保存先または空き容量を確認してください"
 	return "保存しました：" + path
 
 func load_project(path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return "読み込めません"
-	var data: Variant = JSON.parse_string(file.get_as_text())
-	if not (data is Dictionary) or data.get("format", "") != "motion-studio-v1":
-		return "Motion Studio形式ではありません"
+	var loaded: Dictionary = MotionProjectStorage.read_with_backup(path)
+	if not bool(loaded.get("ok", false)):
+		return "読込失敗：保存データとバックアップが不正または見つかりません"
+	var data: Dictionary = loaded["data"]
 	var source: String = str(data.get("source", "sample"))
 	if source == "sample":
 		rig.create_sample()
@@ -735,7 +730,7 @@ func load_project(path: String) -> String:
 	restore(data)
 	history.clear()
 	future.clear()
-	return "読み込みました：" + path
+	return ("読み込みました（バックアップから復元）：" if bool(loaded.get("recovered", false)) else "読み込みました：") + path
 
 func export_animation_tres(path: String) -> String:
 	# All evaluated local FK transforms are output once per frame.
