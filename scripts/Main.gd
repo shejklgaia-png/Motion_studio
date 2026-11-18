@@ -95,7 +95,7 @@ func _build_interface() -> void:
 	help_button.tooltip_text = "最初に試す操作や各モードの説明"
 	var buttons := _row(layout)
 	for entry in [
-		["モデル", "import"], ["保存", "save"], ["開く", "open"],
+		["BB読込", "import"], ["保存", "save"], ["開く", "open"],
 		["出力", "export"], ["取消", "undo"], ["やり直し", "redo"]]:
 		var button_name: String = entry[1]
 		var label: String = entry[0]
@@ -173,7 +173,7 @@ func _show_help() -> void:
 	if help_popup == null:
 		help_popup = AcceptDialog.new()
 		help_popup.title = "Motion Studio かんたん操作ガイド"
-		help_popup.dialog_text = "最初は次の3つだけ試してください。\n\n①「▶ 再生」でサンプルの動きを見ます。\n② 中央の3Dモデルの脚をタップします。\n③ 下の「位置・回転・拡大縮小」で値を変えます。\n\nキーフレームを増やすには、横長の時間スライダーを動かして「＋キー」を押します。\n\n右上の「モーション」をタップすると、作業モードが切り替わります。\n・モーション：部位の動きを編集\n・IK：足先などの目標位置を設定\n・制約：関節の角度・移動範囲を制限\n・接触：床や障害物との接触を確認\n・診断：不自然な動きを確認\n・書き出し：Godot向けに保存\n\n分からなくなったら右上の「使い方」を押してください。"
+		help_popup.dialog_text = "最初は次の3つだけ試してください。\n\n①「BB読込」で .bbmodel を選択します（サンプルでも練習できます）。\n②「読込モーション」から動きを選び、「▶ 再生」を押します。\n③ モデルの脚などをタップして、下の値を変更します。\n\n\n② 中央の3Dモデルの脚をタップします。\n③ 下の「位置・回転・拡大縮小」で値を変えます。\n\nキーフレームを増やすには、横長の時間スライダーを動かして「＋キー」を押します。\n\n右上の「モーション」をタップすると、作業モードが切り替わります。\n・モーション：部位の動きを編集\n・IK：足先などの目標位置を設定\n・制約：関節の角度・移動範囲を制限\n・接触：床や障害物との接触を確認\n・診断：不自然な動きを確認\n・書き出し：Godot向けに保存\n\n分からなくなったら右上の「使い方」を押してください。"
 		help_popup.ok_button_text = "操作してみる"
 		add_child(help_popup)
 	help_popup.popup_centered_ratio(0.9)
