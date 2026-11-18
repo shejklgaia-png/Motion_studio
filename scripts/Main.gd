@@ -246,7 +246,7 @@ func _build_interface() -> void:
 	pan_button.custom_minimum_size = Vector2(79, 44)
 	_style_button(pan_button)
 
-	var guide := _add_text(layout, "2本指で拡大・縮小 ／ 右下で編集操作を切替")
+	var guide := _add_text(layout, "2本指でズーム　／　上のタブで階層・モーション・IKを切替")
 	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
 	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
@@ -446,8 +446,8 @@ func _show_help() -> void:
 func _display_help_step() -> void:
 	var pages := [
 		"1 / 3  モデルを読み込む\n\n上の「ファイル」→「モデルを読み込む」で .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
-		"2 / 3  モーションを再生する\n\n「アニメーション」から動きを選択。\n上の「▶ 再生」で動作を確認します。",
-		"3 / 3  モーションを編集する\n\n3D画面の部位をタップして選択。\n右下の「回転」「移動」を選んで操作します。2本指のピンチで表示を拡大・縮小できます。"
+		"2 / 3  部位とモーションを選ぶ\n\n上の「階層」で関節の親子関係を確認。\n「モーション」で部位やアニメーションを選びます。",
+		"3 / 3  タイムラインで編集\n\n下の黄色い◆がキーフレームです。\n青い再生位置を動かし、3Dの回転リングで編集します。"
 	]
 	help_popup.dialog_text = pages[guide_step]
 	help_popup.ok_button_text = "完了" if guide_step == 2 else "次へ"
