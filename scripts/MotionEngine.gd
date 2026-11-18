@@ -7,6 +7,8 @@ var duration: float = 3.0
 var fps: int = 60
 var frames: Array = []
 var constraints: Dictionary = {}
+# Explicit, deterministic foot contacts for offline IK/FK baking.
+var contact_constraints: Array = []
 var play_time: float = 0.0
 var warnings: Array = []
 var history: Array[String] = []
@@ -20,6 +22,7 @@ const MAX_UNDO := 50
 func setup(model: MotionRig) -> void:
 	rig = model
 	constraints.clear()
+	contact_constraints.clear()
 	bake_source.clear()
 	bake_report.clear()
 	frames.clear()
@@ -202,9 +205,24 @@ func evaluate(at_time: float) -> void:
 		rig.set_pose(name, sampled[name])
 	for name in constraints.keys():
 		_apply_constraint(name, constraints[name])
-	for chain in rig.chains:
+	# Deterministic repeated solving when chains share joints. Independent limbs
+	# are evaluated once; connected IK chains converge in a fixed order.
+	var active_indices: Array[int] = []
+	for i in range(rig.chains.size()):
+		var chain: Dictionary = rig.chains[i]
 		if chain.get("enabled", false) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
-			_solve_chain(chain)
+			active_indices.append(i)
+	var needs_cooperation: bool = _has_shared_ik_joints(active_indices)
+	var passes: int = 3 if needs_cooperation else 1
+	for _iteration in range(passes):
+		for index in active_indices:
+			var item: Dictionary = rig.chains[index]
+			var base_goal: Vector3 = item["target"].global_position
+			var goal: Dictionary = get_contact_goal(index, play_time)
+			if bool(goal.get("active", false)):
+				var influence: float = clampf(float(goal.get("weight", 1.0)), 0.0, 1.0)
+				base_goal = base_goal.lerp(goal["position"], influence)
+			_solve_chain(item, base_goal)
 	warnings = diagnose()
 
 # Capture every editable local joint transform after FK, constraints and IK.
@@ -255,6 +273,8 @@ func bake_ik_fk(target_fps: int = 60) -> Dictionary:
 	# Baked motion no longer requires per-frame IK or active constraints.
 	for chain in rig.chains:
 		chain["enabled"] = false
+	for item in contact_constraints:
+		item["enabled"] = false
 	for name in constraints.keys():
 		constraints[name]["enabled"] = false
 	var worst_position: float = 0.0
@@ -314,7 +334,81 @@ func _apply_constraint(name: String, entry: Dictionary) -> void:
 			"rotation": node.rotation_degrees = blended
 			"scale": node.scale = blended
 
-func _solve_chain(chain: Dictionary) -> void:
+# Uses node identity, not names, to detect shared bones across several IK
+# chains (for example, two legs sharing a pelvis). This is a fixed-pass
+# stabilizer, not a general full-body dynamic solver.
+func _has_shared_ik_joints(indices: Array[int]) -> bool:
+	var counts: Dictionary = {}
+	for index in indices:
+		var chain: Dictionary = rig.chains[index]
+		for key in ["root", "mid"]:
+			var name: String = str(chain.get(key, ""))
+			if name == "":
+				continue
+			counts[name] = int(counts.get(name, 0)) + 1
+			if counts[name] > 1:
+				return true
+	return false
+
+# Contact modes: floor (world y=0), world (fixed 3D point), obstacle (relative
+# to a selected test object). Slip is analytic and time-based, so scrubbing
+# backward / exporting at 30 or 60 FPS produces identical poses.
+func add_contact(chain_index: int, mode: String = "floor", obstacle_index: int = -1) -> bool:
+	if chain_index < 0 or chain_index >= rig.chains.size():
+		return false
+	if mode not in ["floor", "world", "obstacle"]:
+		return false
+	if mode == "obstacle" and (obstacle_index < 0 or obstacle_index >= rig.test_objects.size()):
+		return false
+	var chain: Dictionary = rig.chains[chain_index]
+	if not rig.parts.has(str(chain.get("end", ""))):
+		return false
+	var end_node: Node3D = rig.parts[chain["end"]]
+	var tip_point: Vector3 = end_node.to_global(MotionRig.from_array(chain["tip"]))
+	var point: Vector3 = tip_point
+	if mode == "floor":
+		point.y = 0.0
+	elif mode == "obstacle":
+		var obstacle: Node3D = rig.test_objects[obstacle_index]["node"]
+		point = obstacle.to_local(tip_point)
+	record_undo()
+	chain["enabled"] = true
+	contact_constraints.append({"enabled": true, "chain_index": chain_index,
+		"mode": mode, "obstacle_index": obstacle_index,
+		"point": MotionRig.vec3_array(point), "start": play_time, "finish": duration,
+		"weight": 1.0, "friction": 1.0, "slide": [0.0, 0.0, 0.0]})
+	evaluate(play_time)
+	return true
+
+func get_contact_goal(chain_index: int, at_time: float) -> Dictionary:
+	for i in range(contact_constraints.size() - 1, -1, -1):
+		var entry: Dictionary = contact_constraints[i]
+		if not bool(entry.get("enabled", true)) or int(entry.get("chain_index", -1)) != chain_index:
+			continue
+		var start: float = float(entry.get("start", 0.0))
+		var finish: float = float(entry.get("finish", duration))
+		if at_time < start or at_time > finish:
+			continue
+		var mode: String = str(entry.get("mode", "world"))
+		var position: Vector3 = MotionRig.from_array(entry.get("point", [0.0, 0.0, 0.0]))
+		var slide: Vector3 = MotionRig.from_array(entry.get("slide", [0.0, 0.0, 0.0]))
+		var slip_strength: float = 1.0 - clampf(float(entry.get("friction", 1.0)), 0.0, 1.0)
+		position += slide * maxf(0.0, at_time - start) * slip_strength
+		if mode == "floor":
+			position.y = 0.0
+		elif mode == "obstacle":
+			var object_index: int = int(entry.get("obstacle_index", -1))
+			if object_index < 0 or object_index >= rig.test_objects.size():
+				continue
+			var obj: Node3D = rig.test_objects[object_index]["node"]
+			if not is_instance_valid(obj):
+				continue
+			position = obj.to_global(position)
+		return {"active": true, "position": position,
+			"weight": float(entry.get("weight", 1.0)), "contact_index": i}
+	return {"active": false}
+
+func _solve_chain(chain: Dictionary, goal_override: Variant = null) -> void:
 	var root: Node3D = rig.parts.get(chain["root"])
 	var mid: Node3D = rig.parts.get(chain["mid"])
 	var end: Node3D = rig.parts.get(chain["end"])
@@ -322,16 +416,17 @@ func _solve_chain(chain: Dictionary) -> void:
 		return
 	var tip := MotionRig.from_array(chain["tip"])
 	var target: Node3D = chain["target"]
+	var target_point: Vector3 = goal_override if goal_override is Vector3 else target.global_position
 	var weight := clampf(float(chain.get("weight", 1.0)), 0.0, 1.0)
 	if weight <= 0.0:
 		return
 	var original_root: Quaternion = root.quaternion
 	var original_mid: Quaternion = mid.quaternion
 	match chain.get("method", "CCD"):
-		"FABRIK": _solve_fabrik(root, mid, end, tip, target.global_position)
-		"2ボーン": _solve_two_bone(root, mid, end, tip, target.global_position,
+		"FABRIK": _solve_fabrik(root, mid, end, tip, target_point)
+		"2ボーン": _solve_two_bone(root, mid, end, tip, target_point,
 			MotionRig.from_array(chain.get("pole", [0.0, 0.0, 1.0])))
-		_: _solve_ccd(root, mid, end, tip, target.global_position, 8)
+		_: _solve_ccd(root, mid, end, tip, target_point, 8)
 	root.quaternion = original_root.slerp(root.quaternion, weight)
 	mid.quaternion = original_mid.slerp(mid.quaternion, weight)
 	if constraints.has(chain["root"]):
@@ -429,20 +524,37 @@ func _solve_fabrik(root: Node3D, mid: Node3D, end: Node3D, tip: Vector3, target:
 	_rotate_toward(root, mid.global_position - root.global_position, p1 - root.global_position)
 	_rotate_toward(mid, end.to_global(tip) - mid.global_position, p2 - mid.global_position)
 
+func _active_chain_indices() -> Array[int]:
+	var indices: Array[int] = []
+	for index in range(rig.chains.size()):
+		var chain: Dictionary = rig.chains[index]
+		if bool(chain.get("enabled", false)) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
+			indices.append(index)
+	return indices
+
 func diagnose() -> Array:
 	var report: Array = []
-	for chain in rig.chains:
+	for index in range(rig.chains.size()):
+		var chain: Dictionary = rig.chains[index]
 		if not chain.get("enabled", false):
 			continue
 		if play_time < float(chain.get("start", 0.0)) or play_time > float(chain.get("finish", duration)):
 			continue
 		var end: Node3D = rig.parts.get(chain["end"])
-		var target: Node3D = chain["target"]
 		if end == null:
 			continue
-		var error := end.to_global(MotionRig.from_array(chain["tip"])).distance_to(target.global_position)
+		var desired: Vector3 = chain["target"].global_position
+		var contact: Dictionary = get_contact_goal(index, play_time)
+		if bool(contact.get("active", false)):
+			desired = desired.lerp(contact["position"], clampf(float(contact.get("weight", 1.0)), 0.0, 1.0))
+		var error: float = end.to_global(MotionRig.from_array(chain["tip"])).distance_to(desired)
 		if error > 0.08:
-			report.append(str(chain["name"]) + "：IK目標との誤差 %.3fm" % error)
+			report.append(str(chain["name"]) + ("：接地固定の残差 %.3fm" if bool(contact.get("active", false)) else "：IK目標との誤差 %.3fm") % error)
+	if _has_shared_ik_joints(_active_chain_indices()):
+		report.append("複数IKが関節を共有：3回反復して姿勢を調整しています")
+	for item in contact_constraints:
+		if bool(item.get("enabled", true)) and str(item.get("mode", "")) == "obstacle" and int(item.get("obstacle_index", -1)) >= rig.test_objects.size():
+			report.append("接地固定：参照物体がなくなりました")
 	return report
 
 func record_undo() -> void:
@@ -563,6 +675,7 @@ func snapshot() -> Dictionary:
 	return {"format": "motion-studio-v1", "source": rig.imported_source,
 		"duration": duration, "fps": fps, "time": play_time,
 		"frames": frames.duplicate(true), "constraints": constraints.duplicate(true),
+		"contacts": contact_constraints.duplicate(true),
 		"chains": chain_info, "obstacles": obstacle_info,
 		"bake_source": bake_source.duplicate(true), "bake_report": bake_report.duplicate(true)}
 
@@ -571,6 +684,7 @@ func restore(data: Dictionary) -> void:
 	fps = int(data.get("fps", 60))
 	frames = data.get("frames", []).duplicate(true)
 	constraints = data.get("constraints", {}).duplicate(true)
+	contact_constraints = data.get("contacts", []).duplicate(true)
 	bake_source = data.get("bake_source", {}).duplicate(true)
 	bake_report = data.get("bake_report", {}).duplicate(true)
 	rig.clear_test_objects()
