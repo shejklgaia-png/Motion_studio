@@ -8,6 +8,16 @@ var viewport: SubViewport
 var preview_container: SubViewportContainer
 var camera: Camera3D
 var floor_area: StaticBody3D
+var motion_gizmo: MotionGizmo
+var active_transform: String = "回転"
+var tool_buttons: Dictionary = {}
+var pan_view: bool = false
+var pan_button: Button
+var drag_axis: int = -1
+var drag_start: Vector2 = Vector2.ZERO
+var drag_tangent: Vector2 = Vector2.ZERO
+var drag_value: float = 0.0
+var drag_factor: float = 0.0
 var inspector: VBoxContainer
 var key_row: HBoxContainer
 var seek: HSlider
@@ -50,6 +60,7 @@ func _ready() -> void:
 	_refresh_inspector()
 	_refresh_key_buttons()
 	_update_timeline()
+	_update_gizmo()
 	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
 	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
 		call_deferred("_show_help")
@@ -162,7 +173,26 @@ func _build_interface() -> void:
 	viewport.own_world_3d = true
 	preview_container.add_child(viewport)
 
-	var guide := _add_text(layout, "3D：部位をタップで選択　／　背景ドラッグで視点回転")
+	# The transform buttons act on the selected joint, not on the entire model.
+	# Zoom + / - and camera pan are independent of keyframe editing.
+	var tools := _row(layout)
+	for tool_name in ["回転", "移動", "拡縮"]:
+		var tool_id: String = tool_name
+		var tool_button := _make_button(tool_name, func(): _choose_transform(tool_id), tools)
+		tool_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tool_buttons[tool_id] = tool_button
+		_style_button(tool_button, tool_id == active_transform)
+	pan_button = _make_button("視点移動", _toggle_view_pan, tools)
+	pan_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(pan_button)
+	var zoom_out := _make_button("－", func(): _zoom(1.2), tools)
+	zoom_out.custom_minimum_size.x = 46
+	_style_button(zoom_out)
+	var zoom_in := _make_button("＋", func(): _zoom(1.0 / 1.2), tools)
+	zoom_in.custom_minimum_size.x = 46
+	_style_button(zoom_in)
+
+	var guide := _add_text(layout, "関節タップ→色付き円をドラッグ。回転・移動・拡縮切替可")
 	guide.autowrap_mode = TextServer.AUTOWRAP_OFF
 	guide.clip_text = true
 	guide.add_theme_font_size_override("font_size", 12)
@@ -288,6 +318,32 @@ func _on_more_action(id: int) -> void:
 		4: _toolbar_action("redo")
 		5: _show_help()
 
+func _choose_transform(kind: String) -> void:
+	active_transform = kind
+	pan_view = false
+	_style_button(pan_button, false)
+	for name in tool_buttons:
+		_style_button(tool_buttons[name], name == kind)
+	_update_gizmo()
+	_note("操作：「%s」 3D画面の色付きハンドルをドラッグしてください" % kind)
+
+func _toggle_view_pan() -> void:
+	pan_view = not pan_view
+	_style_button(pan_button, pan_view)
+	_update_gizmo()
+	_note("視点移動：背景をドラッグして画面を平行移動" if pan_view else "視点回転：背景をドラッグしてください")
+
+func _zoom(multiplier: float) -> void:
+	camera_distance = clampf(camera_distance * multiplier, 0.5, 90.0)
+	_update_camera()
+
+func _update_gizmo() -> void:
+	if motion_gizmo == null or rig == null or camera == null:
+		return
+	var show_handles: bool = mode == "モーション" and not pan_view and not playing and rig.parts.has(selected_part)
+	var selected_node: Node3D = rig.parts[selected_part] if rig.parts.has(selected_part) else null
+	motion_gizmo.set_state(selected_node, camera, active_transform, drag_axis, show_handles)
+
 func _change_mode(new_mode: String) -> void:
 	if mode == new_mode and editor_body.visible:
 		return
@@ -297,6 +353,7 @@ func _change_mode(new_mode: String) -> void:
 	for name in mode_buttons:
 		_style_button(mode_buttons[name], name == mode)
 	_refresh_inspector()
+	_update_gizmo()
 	editor_scroll.scroll_vertical = 0
 
 func _toggle_editor() -> void:
@@ -390,12 +447,15 @@ func _build_stage() -> void:
 	rig = MotionRig.new()
 	stage.add_child(rig)
 	rig.create_sample()
+	motion_gizmo = MotionGizmo.new()
+	stage.add_child(motion_gizmo)
 
 func _update_camera() -> void:
 	var center := camera_focus
 	camera.position = center + Vector3(
 		sin(camera_yaw) * cos(camera_pitch), sin(camera_pitch), cos(camera_yaw) * cos(camera_pitch)) * camera_distance
 	camera.look_at(center, Vector3.UP)
+	_update_gizmo()
 
 func _note(message: String) -> void:
 	message_label.text = message
@@ -513,6 +573,7 @@ func _after_model_change(note: String) -> void:
 	_refresh_inspector()
 	_refresh_key_buttons()
 	_update_timeline()
+	_update_gizmo()
 	_note(note)
 
 func _refresh_part_picker() -> void:
@@ -527,6 +588,7 @@ func _refresh_part_picker() -> void:
 	if not rig.parts.is_empty():
 		part_picker.select(selected_index)
 		selected_part = part_picker.get_item_text(selected_index)
+	_update_gizmo()
 
 func _refresh_key_buttons() -> void:
 	for child in key_row.get_children():
@@ -543,6 +605,7 @@ func _update_timeline() -> void:
 func _seek_to(value: float) -> void:
 	motion.evaluate(value)
 	_update_timeline()
+	_update_gizmo()
 	if show_original:
 		_show_raw_pose()
 
@@ -554,6 +617,7 @@ func _seek_by(seconds: float) -> void:
 func _toggle_playback() -> void:
 	playing = not playing
 	play_button.text = "Ⅱ 停止" if playing else "▶ 再生"
+	_update_gizmo()
 
 func _insert_key() -> void:
 	motion.record_undo()
@@ -896,37 +960,100 @@ func _plane_position(screen_pos: Vector2, height: float) -> Vector3:
 	var factor := (height - origin.y) / dir.y
 	return origin + dir * factor
 
+func _camera_screen_position(position: Vector2) -> Vector2:
+	var dimensions := Vector2(maxf(preview_container.size.x, 1.0), maxf(preview_container.size.y, 1.0))
+	return Vector2(position.x * float(viewport.size.x) / dimensions.x, position.y * float(viewport.size.y) / dimensions.y)
+
 func _viewport_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			camera_distance = clampf(camera_distance - 0.5, 2.5, 24.0)
-			_update_camera()
+			_zoom(1.0 / 1.12)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			camera_distance = clampf(camera_distance + 0.5, 2.5, 24.0)
-			_update_camera()
+			_zoom(1.12)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			pointer_down = event.pressed
 			if pointer_down:
-				_pick_from_screen(event.position)
+				var point: Vector2 = _camera_screen_position(event.position)
+				if _start_transform_drag(point):
+					return
+				_pick_from_screen(point)
 			else:
+				if drag_axis >= 0:
+					_refresh_key_buttons()
+					_refresh_inspector()
+					drag_axis = -1
+					_update_gizmo()
 				dragging_object = false
 	elif event is InputEventMouseMotion and pointer_down:
-		if dragging_object and mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
+		var pos: Vector2 = _camera_screen_position(event.position)
+		if drag_axis >= 0:
+			_drag_transform(pos)
+		elif dragging_object and mode == "IK" and selected_chain >= 0 and selected_chain < rig.chains.size():
 			var target: Node3D = rig.chains[selected_chain]["target"]
-			var p := _plane_position(event.position, target.global_position.y)
-			target.global_position = p
+			target.global_position = _plane_position(pos, target.global_position.y)
 			motion.evaluate(motion.play_time)
 		elif dragging_object and mode == "接触" and selected_test >= 0 and selected_test < rig.test_objects.size():
 			var obstacle: Node3D = rig.test_objects[selected_test]["node"]
-			var p := _plane_position(event.position, obstacle.position.y)
-			obstacle.position = p
+			obstacle.position = _plane_position(pos, obstacle.position.y)
+		elif pan_view:
+			var units: float = camera_distance * tan(deg_to_rad(camera.fov) * 0.5) * 2.0 / maxf(1.0, float(viewport.size.y))
+			var delta_screen: Vector2 = _camera_screen_position(event.relative)
+			camera_focus -= (camera.global_transform.basis.x * delta_screen.x + camera.global_transform.basis.y * delta_screen.y) * units
+			_update_camera()
 		else:
-			camera_yaw -= event.relative.x * 0.008
-			camera_pitch = clampf(camera_pitch + event.relative.y * 0.007, -0.2, 1.3)
+			var relative: Vector2 = _camera_screen_position(event.relative)
+			camera_yaw -= relative.x * 0.008
+			camera_pitch = clampf(camera_pitch + relative.y * 0.007, -0.2, 1.3)
 			_update_camera()
 	elif event is InputEventMagnifyGesture:
-		camera_distance = clampf(camera_distance / event.factor, 2.5, 24.0)
-		_update_camera()
+		_zoom(1.0 / maxf(0.1, event.factor))
+
+func _start_transform_drag(point: Vector2) -> bool:
+	if mode != "モーション" or pan_view or not rig.parts.has(selected_part) or playing:
+		return false
+	var hit: Dictionary = motion_gizmo.hit_test(point)
+	if hit.is_empty():
+		return false
+	drag_axis = int(hit["axis"])
+	drag_tangent = hit["tangent"]
+	drag_start = point
+	var base: Dictionary = motion.sample(motion.play_time).get(selected_part, {})
+	var field := _transform_field()
+	var current: Vector3 = MotionRig.from_array(base.get(field, [0.0, 0.0, 0.0]))
+	drag_value = current[drag_axis]
+	if active_transform == "回転":
+		drag_factor = 180.0 / (PI * maxf(1.0, float(hit["radius_pixels"])))
+	elif active_transform == "移動":
+		drag_factor = motion_gizmo.translation_per_pixel(drag_axis)
+	else:
+		drag_factor = 0.013
+	playing = false
+	play_button.text = "▶ 再生"
+	motion.record_undo()
+	_update_gizmo()
+	return true
+
+func _transform_field() -> String:
+	if active_transform == "移動":
+		return "position"
+	if active_transform == "拡縮":
+		return "scale"
+	return "rotation"
+
+func _drag_transform(point: Vector2) -> void:
+	var delta: Vector2 = point - drag_start
+	var raw_value: float = drag_value + delta.dot(drag_tangent) * drag_factor
+	var field := _transform_field()
+	if field == "scale":
+		raw_value = clampf(raw_value, 0.02, 30.0)
+	elif field == "position":
+		raw_value = clampf(raw_value, -100.0, 100.0)
+	else:
+		raw_value = clampf(raw_value, -720.0, 720.0)
+	motion.set_key_component(motion.play_time, selected_part, field, drag_axis, raw_value)
+	_update_gizmo()
+	var unit := "°" if field == "rotation" else ("m" if field == "position" else "倍")
+	_note("%s　%s軸：%.2f%s（現在の時間にキーを保存）" % [active_transform, ["X", "Y", "Z"][drag_axis], raw_value, unit])
 
 func _pick_from_screen(position: Vector2) -> void:
 	if mode == "IK" and not rig.chains.is_empty():
@@ -955,6 +1082,7 @@ func _pick_from_screen(position: Vector2) -> void:
 		selected_part = str(collider.get_meta("part_name"))
 		_refresh_part_picker()
 		_refresh_inspector()
+		_update_gizmo()
 	elif collider.has_meta("test_index"):
 		selected_test = int(collider.get_meta("test_index"))
 		dragging_object = mode == "接触"
