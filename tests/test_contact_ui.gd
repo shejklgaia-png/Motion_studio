@@ -12,7 +12,9 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	await process_frame
+	print("CONTACT UI CHECKPOINT 1: before app.call("_change_mode", "接触")")
 	app.call("_change_mode", "接触")
+	print("CONTACT UI CHECKPOINT 1: after")
 	await process_frame
 	var motion: MotionEngine = app.get("motion")
 	var inspector: VBoxContainer = app.get("inspector")
@@ -23,7 +25,9 @@ func _run() -> void:
 	if not labels.any(func(t: String): return t.contains("足先固定")):
 		_fail("Touch inspector did not expose contact tools")
 		return
+	print("CONTACT UI CHECKPOINT 2: before app.call("_new_contact", "floor")")
 	app.call("_new_contact", "floor")
+	print("CONTACT UI CHECKPOINT 2: after")
 	await process_frame
 	if motion.contact_constraints.size() != 1:
 		_fail("Contact creation button did not create a pin")
@@ -36,24 +40,32 @@ func _run() -> void:
 		_fail("Floor contact anchor marker not grounded")
 		return
 	var count: int = motion.history.size()
+	print("CONTACT UI CHECKPOINT 3: before app.call("_change_contact", 0, "friction", 0.25)")
 	app.call("_change_contact", 0, "friction", 0.25)
+	print("CONTACT UI CHECKPOINT 3: after")
 	if absf(float(motion.contact_constraints[0]["friction"]) - 0.25) > 0.001:
 		_fail("Friction control did not update live contact")
 		return
 	if motion.history.size() <= count:
 		_fail("Friction edit is not undoable")
 		return
+	print("CONTACT UI CHECKPOINT 4: before app.call("_toolbar_action", "undo")")
 	app.call("_toolbar_action", "undo")
+	print("CONTACT UI CHECKPOINT 4: after")
 	if absf(float(motion.contact_constraints[0]["friction"]) - 1.0) > 0.001:
 		_fail("Undo did not restore contact friction")
 		return
+	print("CONTACT UI CHECKPOINT 5: before app.call("_change_mode", "モーション")")
 	app.call("_change_mode", "モーション")
+	print("CONTACT UI CHECKPOINT 5: after")
 	await process_frame
 	markers = app.get("contact_markers")
 	if not markers.is_empty() and markers[0].visible:
 		_fail("Contact overlay should hide outside IK/contact/diagnostics")
 		return
+	print("CONTACT UI CHECKPOINT 6: before app.call("_change_mode", "診断")")
 	app.call("_change_mode", "診断")
+	print("CONTACT UI CHECKPOINT 6: after")
 	await process_frame
 	markers = app.get("contact_markers")
 	if markers.is_empty() or not markers[0].visible:
@@ -61,7 +73,9 @@ func _run() -> void:
 		return
 	app.call("_change_mode", "接触")
 	await process_frame
+	print("CONTACT UI CHECKPOINT 7: before app.call("_delete_contact")")
 	app.call("_delete_contact")
+	print("CONTACT UI CHECKPOINT 7: after")
 	await process_frame
 	if not motion.contact_constraints.is_empty():
 		_fail("Deleting a pin from UI failed")
