@@ -16,6 +16,7 @@ var message_label: Label
 var part_picker: OptionButton
 var mode_picker: OptionButton
 var play_button: Button
+var help_popup: AcceptDialog
 var selected_part: String = "胴体"
 var selected_chain: int = 0
 var selected_test: int = -1
@@ -41,7 +42,9 @@ func _ready() -> void:
 	_refresh_inspector()
 	_refresh_key_buttons()
 	_update_timeline()
-	_note("サンプル四脚モデルを読み込みました。日本語UIで編集できます。")
+	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
+	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
+		call_deferred("_show_help")
 
 func _make_button(label: String, callback: Callable, owner: Node) -> Button:
 	var button := Button.new()
@@ -85,10 +88,12 @@ func _build_interface() -> void:
 		mode = MODES[index]
 		_refresh_inspector())
 	header.add_child(mode_picker)
+	var help_button := _make_button("使い方", _show_help, header)
+	help_button.tooltip_text = "最初に試す操作や各モードの説明"
 	var buttons := _row(layout)
 	for entry in [
 		["モデル", "import"], ["保存", "save"], ["開く", "open"],
-		["出力", "export"], ["↶", "undo"], ["↷", "redo"]]:
+		["出力", "export"], ["取消", "undo"], ["やり直し", "redo"]]:
 		var button_name: String = entry[1]
 		var label: String = entry[0]
 		var button := _make_button(label, func(): _toolbar_action(button_name), buttons)
@@ -104,7 +109,7 @@ func _build_interface() -> void:
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.own_world_3d = true
 	preview_container.add_child(viewport)
-	var guide := _add_text(layout, "3D：タップで部位選択・空白ドラッグで視点回転 / IKとテスト物体はドラッグで移動")
+	var guide := _add_text(layout, "基本操作：①再生 ②モデルの脚をタップ ③下の位置・回転を調整。背景ドラッグで視点を回転")
 	guide.add_theme_font_size_override("font_size", 12)
 	var transport := _row(layout)
 	play_button = _make_button("▶ 再生", _toggle_playback, transport)
@@ -146,6 +151,18 @@ func _build_interface() -> void:
 	message_label = _add_text(layout, "準備中")
 	message_label.add_theme_font_size_override("font_size", 13)
 	message_label.custom_minimum_size.y = 20
+
+func _show_help() -> void:
+	if help_popup == null:
+		help_popup = AcceptDialog.new()
+		help_popup.title = "Motion Studio かんたん操作ガイド"
+		help_popup.dialog_text = "最初は次の3つだけ試してください。\n\n①「▶ 再生」でサンプルの動きを見ます。\n② 中央の3Dモデルの脚をタップします。\n③ 下の「位置・回転・拡大縮小」で値を変えます。\n\nキーフレームを増やすには、横長の時間スライダーを動かして「＋キー」を押します。\n\n右上の「モーション」をタップすると、作業モードが切り替わります。\n・モーション：部位の動きを編集\n・IK：足先などの目標位置を設定\n・制約：関節の角度・移動範囲を制限\n・接触：床や障害物との接触を確認\n・診断：不自然な動きを確認\n・書き出し：Godot向けに保存\n\n分からなくなったら右上の「使い方」を押してください。"
+		help_popup.ok_button_text = "操作してみる"
+		add_child(help_popup)
+	help_popup.popup_centered_ratio(0.9)
+	var file := FileAccess.open("user://motion_studio_guide_seen.txt", FileAccess.WRITE)
+	if file:
+		file.store_string("seen")
 
 func _build_stage() -> void:
 	stage = Node3D.new()
@@ -357,6 +374,15 @@ func _refresh_inspector() -> void:
 	if inspector == null or motion == null:
 		return
 	_clear_inspector()
+	var hints := {
+		"モーション": "① 再生または時間バーを動かす → ② 脚を選ぶ → ③ 数値を変更 → ④ ＋キーで保存",
+		"IK": "脚の先端を目標に合わせる機能です。目標位置や計算方法を設定します。",
+		"制約": "関節の曲がる範囲や、位置・伸縮の限界を設定します。",
+		"接触": "床やテスト用の箱・球を置いて、足先との接触を確認します。",
+		"診断": "関節・接地・IKの異常を確認します。",
+		"書き出し": "完成した動きをGodotで使うために出力します。"
+	}
+	_add_text(inspector, str(hints.get(mode, "")))
 	match mode:
 		"モーション": _inspector_motion()
 		"IK": _inspector_ik()
