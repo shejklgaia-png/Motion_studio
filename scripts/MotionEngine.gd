@@ -16,6 +16,8 @@ var future: Array[String] = []
 # Original non-baked settings and keyframes are retained for later restoration.
 var bake_source: Dictionary = {}
 var bake_report: Dictionary = {}
+# Most recent exported file's read-back verification; never persisted as project data.
+var last_export_report: Dictionary = {}
 const MAX_BAKE_FRAMES := 3601
 const MAX_UNDO := 50
 
@@ -25,6 +27,7 @@ func setup(model: MotionRig) -> void:
 	contact_constraints.clear()
 	bake_source.clear()
 	bake_report.clear()
+	last_export_report.clear()
 	frames.clear()
 	frames.append({"time": 0.0, "poses": rig.rest.duplicate(true)})
 	frames.append({"time": duration, "poses": rig.rest.duplicate(true)})
@@ -687,6 +690,7 @@ func restore(data: Dictionary) -> void:
 	contact_constraints = data.get("contacts", []).duplicate(true)
 	bake_source = data.get("bake_source", {}).duplicate(true)
 	bake_report = data.get("bake_report", {}).duplicate(true)
+	last_export_report.clear()
 	rig.clear_test_objects()
 	for item in data.get("obstacles", []):
 		var index: int = rig.add_test_object(str(item.get("kind", "箱")), MotionRig.from_array(item.get("position", [0, 0.5, 0])))
@@ -733,6 +737,9 @@ func load_project(path: String) -> String:
 	return ("読み込みました（バックアップから復元）：" if bool(loaded.get("recovered", false)) else "読み込みました：") + path
 
 func export_animation_tres(path: String) -> String:
+	last_export_report.clear()
+	if rig == null or rig.parts.is_empty() or frames.is_empty():
+		return "アニメーション出力失敗：モデルまたはキーフレームがありません"
 	# All evaluated local FK transforms are output once per frame.
 	# With an already-baked timeline this emits keys without doing runtime IK.
 	var saved_time: float = play_time
@@ -764,4 +771,17 @@ func export_animation_tres(path: String) -> String:
 	var result: Error = ResourceSaver.save(anim, path)
 	if result != OK:
 		return "アニメーション出力失敗：" + str(result)
-	return "Godotアニメーションを出力しました：" + path
+	# Validate what Godot can actually read back, not only the live Animation
+	# used by ResourceSaver. This is a local parity test, not a promise that
+	# a different Skeleton3D/root setup in a game will match automatically.
+	var imported: Animation = ResourceLoader.load(path, "Animation", ResourceLoader.CACHE_MODE_IGNORE) as Animation
+	if imported == null:
+		last_export_report = {"ok": false, "reloaded": false, "path": path,
+			"errors": ["保存した.tresをResourceLoaderで再読込できませんでした"]}
+		return "Godotアニメーションを出力しました（⚠ 再読込検証不可）：" + path
+	last_export_report = MotionExportAudit.audit_export(self, imported)
+	last_export_report["reloaded"] = true
+	last_export_report["path"] = path
+	if not bool(last_export_report.get("ok", false)):
+		return "Godotアニメーションを出力しました（⚠ 姿勢差あり・ベイク診断を確認）：" + path
+	return "Godotアニメーションを出力しました（%d点を再読込照合）：" % int(last_export_report.get("key_samples", 0)) + path
