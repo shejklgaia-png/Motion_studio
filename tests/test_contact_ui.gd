@@ -20,7 +20,7 @@ func _run() -> void:
 	for element in inspector.get_children():
 		if element is Label:
 			labels.append(str(element.text))
-	if not labels.any(func(t: String): return t.contains("足先の固定")):
+	if not labels.any(func(t: String): return t.contains("足先固定")):
 		_fail("Touch inspector did not expose contact tools")
 		return
 	app.call("_new_contact", "floor")
