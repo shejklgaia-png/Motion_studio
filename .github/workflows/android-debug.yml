@@ -76,6 +76,14 @@ jobs:
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_clarity_ui.gd
 
+      - name: Test analytic two-bone IK, pole control and bake
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_analytic_ik.gd
+
+      - name: Test touch editing of IK goals
+        run: |
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_ik_touch.gd
+
       - name: Export Android debug APK
         env:
           GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
