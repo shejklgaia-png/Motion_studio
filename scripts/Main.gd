@@ -1,7 +1,14 @@
 extends Control
 
 const MODES := ["階層", "モーション", "IK", "制約", "接触", "診断", "ベイク"]
-const ADVANCED_MODES := ["制約", "接触", "診断", "ベイク"]
+# The top-level pages answer "what am I trying to do?", while the
+# secondary tabs expose every existing editor mode without hiding them in menus.
+const TASK_PAGES := {
+    "モデル": ["階層", "制約"],
+    "動き": ["モーション"],
+    "IK・接触": ["IK", "接触"],
+    "仕上げ": ["診断", "ベイク"]
+}
 var rig: MotionRig
 var motion: MotionEngine
 var stage: Node3D
@@ -51,6 +58,10 @@ var message_label: Label
 var part_picker: OptionButton
 var mode_picker: OptionButton
 var mode_buttons: Dictionary = {}
+var primary_page_buttons: Dictionary = {}
+var submode_nav: HBoxContainer
+var page_hint: Label
+var page_mode_memory: Dictionary = {}
 var advanced_menu: MenuButton
 var editor_title: Label
 var key_scroll: ScrollContainer
@@ -350,43 +361,55 @@ func _build_interface() -> void:
 	_style_button(editor_toggle)
 	mode_action_bar = _row(editor)
 	mode_action_bar.add_theme_constant_override("separation", 5)
+	# Four task tabs stay above the preview. Related tools become secondary
+	# buttons in the inspector, not nested inside an opaque overflow menu.
 	var tabs_scroll := ScrollContainer.new()
-	tabs_scroll.custom_minimum_size.y = 44
+	tabs_scroll.custom_minimum_size.y = 48
 	tabs_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tabs_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	tabs_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	tabs_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	layout.add_child(tabs_scroll)
-	# Blockbench places mode selection immediately above the 3D viewport.
 	layout.move_child(tabs_scroll, 2)
 	var tabs := _row(tabs_scroll)
-	for item in ["階層", "モーション", "IK"]:
-		var current_mode: String = item
-		var caption: String = {"階層":"部位・階層", "モーション":"動きを編集", "IK":"IK設定"}[item]
-		var tab := _make_button(caption, func(): _change_mode(current_mode), tabs)
-		tab.custom_minimum_size.x = 90 if item != "モーション" else 116
-		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mode_buttons[item] = tab
-		_style_button(tab, item == mode)
-	advanced_menu = MenuButton.new()
-	advanced_menu.text = "詳細機能 ▾"
-	advanced_menu.custom_minimum_size = Vector2(113, 44)
-	advanced_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tabs.add_child(advanced_menu)
-	_style_button(advanced_menu)
-	var tools_popup: PopupMenu = advanced_menu.get_popup()
-	for index in range(ADVANCED_MODES.size()):
-		var tool_name: String = ADVANCED_MODES[index]
-		var display_name: String = {
-			"制約":"関節の可動域（制約）",
-			"接触":"床・物体への接触",
-			"診断":"動きのチェック",
-			"ベイク":"IK/FKをキーフレーム化"
-		}[tool_name]
-		tools_popup.add_item(display_name, index)
-		mode_buttons[tool_name] = advanced_menu
-	tools_popup.id_pressed.connect(func(id: int):
-		if id >= 0 and id < ADVANCED_MODES.size():
-			_change_mode(ADVANCED_MODES[id]))
+	tabs.add_theme_constant_override("separation", 3)
+	for page_name in ["モデル", "動き", "IK・接触", "仕上げ"]:
+		var page_id: String = page_name
+		var page_button := _make_button(page_name, func(): _select_primary_page(page_id), tabs)
+		page_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		page_button.custom_minimum_size = Vector2(0, 48)
+		page_button.clip_text = true
+		page_button.toggle_mode = true
+		page_button.focus_mode = Control.FOCUS_NONE
+		primary_page_buttons[page_name] = page_button
+
+	# Inside each task page, show only relevant sub-tools. The full set
+	# of seven modes is preserved, including constraints and diagnostics.
+	submode_nav = _row(editor)
+	editor.move_child(submode_nav, 1)
+	for name in MODES:
+		var mode_id: String = name
+		var label: String = {
+			"階層": "階層・選択",
+			"モーション": "キーフレーム",
+			"IK": "IK設定",
+			"制約": "関節の可動域",
+			"接触": "接地・接触回避",
+			"診断": "動きを診断",
+			"ベイク": "ベイク・出力"
+		}[name]
+		var mode_button := _make_button(label, func(): _change_mode(mode_id), submode_nav)
+		mode_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mode_button.custom_minimum_size = Vector2(0, 44)
+		mode_button.clip_text = true
+		mode_button.toggle_mode = true
+		mode_button.focus_mode = Control.FOCUS_NONE
+		mode_buttons[name] = mode_button
+	page_hint = _add_text(editor, "")
+	page_hint.add_theme_font_size_override("font_size", 12)
+	page_hint.add_theme_color_override("font_color", Color("b5c9d9"))
+	page_hint.custom_minimum_size.y = 20
+	page_hint.clip_text = true
+	editor.move_child(page_hint, 2)
 	editor_body = VBoxContainer.new()
 	editor_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_body.add_theme_constant_override("separation", 5)
@@ -580,7 +603,45 @@ func _update_gizmo() -> void:
 	var selected_node: Node3D = rig.parts[selected_part] if rig.parts.has(selected_part) else null
 	motion_gizmo.set_state(selected_node, camera, active_transform, drag_axis, show_handles)
 
+func _select_primary_page(page_name: String) -> void:
+	if not TASK_PAGES.has(page_name):
+		return
+	var target: String = str(page_mode_memory.get(page_name, TASK_PAGES[page_name][0]))
+	_change_mode(target)
+
+func _refresh_page_navigation() -> void:
+	var active_page := "動き"
+	for page_name in TASK_PAGES:
+		if mode in TASK_PAGES[page_name]:
+			active_page = page_name
+			break
+	page_mode_memory[active_page] = mode
+	for page_name in primary_page_buttons:
+		var tab: Button = primary_page_buttons[page_name]
+		tab.set_pressed_no_signal(page_name == active_page)
+		_style_button(tab, page_name == active_page)
+	for name in mode_buttons:
+		var tab: Button = mode_buttons[name]
+		tab.visible = name in TASK_PAGES[active_page]
+		tab.set_pressed_no_signal(name == mode)
+		_style_button(tab, name == mode)
+	if submode_nav != null:
+		submode_nav.visible = editor_body.visible and (TASK_PAGES[active_page] as Array).size() > 1
+	if page_hint != null:
+		page_hint.text = {
+			"階層": "部位を選択し、親子関係を確認します",
+			"制約": "選択した関節の角度・移動範囲を制限します",
+			"モーション": "タイムラインでポーズとキーを編集します",
+			"IK": "足先などの目標位置とIKチェーンを設定します",
+			"接触": "指定時間の接地・物体との接触回避を設定します",
+			"診断": "関節・接触・モーションの問題を確認します",
+			"ベイク": "IK/FKを確定しGodot向けデータを書き出します"
+		}.get(mode, "")
+		page_hint.visible = editor_body.visible
+
 func _change_mode(new_mode: String) -> void:
+	if not MODES.has(new_mode):
+		return
 	if mode == new_mode and editor_body.visible:
 		return
 	mode = new_mode
@@ -588,10 +649,7 @@ func _change_mode(new_mode: String) -> void:
 	editor_toggle.text = "閉じる ▲"
 	_apply_mode_layout()
 	_refresh_timeline_view()
-	for name in ["階層", "モーション", "IK"]:
-		_style_button(mode_buttons[name], name == mode)
-	_style_button(advanced_menu, mode in ADVANCED_MODES)
-	advanced_menu.text = "詳細：%s ▾" % mode if mode in ADVANCED_MODES else "詳細機能 ▾"
+	_refresh_page_navigation()
 	editor_title.text = "編集：%s" % mode
 	_refresh_inspector()
 	_update_gizmo()
@@ -680,6 +738,7 @@ func _apply_mode_layout() -> void:
 	part_selector_label.text = "対象パーツ" if mode not in ["モーション", "階層"] else "② 動かす部位"
 	animation_selector_label.text = "確認する動き" if mode not in ["モーション", "階層"] else "① モーション選択"
 	_rebuild_mode_actions()
+	_refresh_page_navigation()
 
 func _toggle_editor() -> void:
 	editor_body.visible = not editor_body.visible

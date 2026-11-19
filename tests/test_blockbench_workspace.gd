@@ -32,7 +32,7 @@ func _verify_blockbench_workspace() -> void:
 	if timeline.size.y < 115.0 or timeline.get_parent() == null:
 		_fail("Multi-channel timeline not visible")
 		return
-	var tab_button: Button = tabs["モーション"]
+	var tab_button: Button = (app.get("primary_page_buttons") as Dictionary)["動き"]
 	var top_of_preview: float = preview.global_position.y
 	if tab_button.global_position.y >= top_of_preview:
 		_fail("Mode tabs are not above the viewport")

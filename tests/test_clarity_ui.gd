@@ -19,7 +19,8 @@ func _run() -> void:
 	var editor_body: VBoxContainer = app.get("editor_body")
 	var preview: Control = app.get("preview_frame")
 	var tabs: Dictionary = app.get("mode_buttons")
-	var advanced: MenuButton = app.get("advanced_menu")
+	var primary_tabs: Dictionary = app.get("primary_page_buttons")
+	var submode_tabs: Dictionary = app.get("mode_buttons")
 	var key_scroll: ScrollContainer = app.get("key_scroll")
 	var key_list_toggle: Button = app.get("key_list_toggle")
 	var editor_title: Label = app.get("editor_title")
@@ -35,8 +36,8 @@ func _run() -> void:
 	if selector_bar.global_position.y <= preview.global_position.y:
 		_fail("Selectors are not below the preview")
 		return
-	if advanced == null or advanced.get_popup().item_count < 4:
-		_fail("Advanced features menu incomplete")
+	if primary_tabs.size() != 4 or submode_tabs.size() != 7:
+		_fail("Task-group navigation is incomplete")
 		return
 	for label in ["階層", "モーション", "IK", "制約", "接触", "診断", "ベイク"]:
 		if not tabs.has(label):
@@ -68,13 +69,13 @@ func _run() -> void:
 	if not editor_body.visible or not editor_title.text.contains("ベイク"):
 		_fail("Advanced menu mode not visible in the inspector")
 		return
-	if not advanced.text.contains("ベイク"):
-		_fail("Current advanced mode is not indicated")
+	if not (primary_tabs["仕上げ"] as Button).button_pressed:
+		_fail("Finishing page must be selected for bake")
 		return
 	app.call("_change_mode", "モーション")
 	await process_frame
-	if advanced.text.contains("ベイク"):
-		_fail("Advanced menu retains an incorrect selected label")
+	if not (primary_tabs["動き"] as Button).button_pressed:
+		_fail("Motion page did not regain selected state")
 		return
 	var rig: MotionRig = app.get("rig")
 	if rig == null or rig.parts.is_empty():
