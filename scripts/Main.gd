@@ -210,7 +210,7 @@ func _build_interface() -> void:
 	var popup := more_menu.get_popup()
 	popup.add_item("パーツ選択（検索・階層）", 6)
 	popup.add_separator()
-	for item in [["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
+	for item in [["取り消す", 3], ["やり直す", 4]]:
 		popup.add_item(str(item[0]), int(item[1]))
 	popup.id_pressed.connect(_on_more_action)
 	_build_part_select_popup()
@@ -506,7 +506,6 @@ func _on_more_action(id: int) -> void:
 		6: _open_part_selector()
 		3: _toolbar_action("undo")
 		4: _toolbar_action("redo")
-		5: _show_help()
 
 func _update_history_buttons() -> void:
 	if undo_button != null and motion != null:
