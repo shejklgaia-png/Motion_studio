@@ -418,7 +418,8 @@ func _ground_surface_min_y(chain: Dictionary) -> float:
 		var end: Node3D = rig.parts.get(str(chain.get("end", "")))
 		if end != null:
 			return end.to_global(MotionRig.from_array(chain["tip"])).y
-	return 0.0
+		return 0.0
+	return lowest
 
 # Contact modes: floor (world y=0), world (fixed 3D point), obstacle (relative
 # to a selected test object). Slip is analytic and time-based, so scrubbing
