@@ -963,10 +963,13 @@ func restore(data: Dictionary) -> void:
 		var latest: Dictionary = rig.chains[-1]
 		for key in ["enabled", "method", "weight", "start", "finish", "pole",
 			"collision_avoid", "collision_floor", "collision_objects", "collision_object_index",
-			"collision_height", "collision_margin", "collision_include_mid",
-			"walk_enabled", "walk_base", "walk_takeoff", "walk_landing",
-			"walk_forward", "walk_lift"]:
+			"collision_height", "collision_margin", "collision_include_mid"]:
 			latest[key] = chain.get(key, latest.get(key))
+		# Old projects have no gait data. Never populate absent fields with null.
+		for key in ["walk_enabled", "walk_base", "walk_takeoff", "walk_landing",
+			"walk_forward", "walk_lift"]:
+			if chain.has(key):
+				latest[key] = chain[key]
 		# Old projects with ground-follow settings transparently become
 		# floor-only collision avoidance; no user settings are discarded.
 		if not chain.has("collision_avoid") and bool(chain.get("ground_follow", false)):
