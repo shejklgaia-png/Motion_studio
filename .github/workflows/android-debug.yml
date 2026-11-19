@@ -107,9 +107,10 @@ jobs:
         run: |
           timeout 25s ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_contact_ui.gd
 
-      - name: Test geometry-aware ground-follow IK on a curved sweep
+      - name: Test time-gated collision avoidance and authored curved animation
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_ground_follow_ik.gd
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_contact_avoidance_objects.gd
 
       - name: Export Android debug APK
         env:
