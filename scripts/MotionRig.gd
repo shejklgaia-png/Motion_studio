@@ -142,10 +142,12 @@ func add_chain(label: String, root_name: String, mid_name: String, end_name: Str
 		"tip": [tip.x, tip.y, tip.z], "target": target,
 		"enabled": false, "weight": 1.0, "method": "CCD",
 		"start": 0.0, "finish": 3.0, "pole": [0.0, 0.0, 1.0],
-		# Optional sweep mode follows the authored X/Z path while lifting/lowering
-		# the lower-leg + foot meshes onto a flat floor.
-		"ground_follow": false, "ground_height": 0.0,
-		"ground_clearance": 0.005, "ground_include_lower": true})
+		# Time-gated environment avoidance. The contact target is not pinned:
+		# the authored animation is kept until geometry would intersect.
+		"collision_avoid": false, "collision_floor": true,
+		"collision_objects": false, "collision_object_index": -1,
+		"collision_height": 0.0, "collision_margin": 0.005,
+		"collision_include_mid": true})
 
 func store_rest() -> void:
 	rest.clear()
