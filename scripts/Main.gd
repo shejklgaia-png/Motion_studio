@@ -332,7 +332,8 @@ func _build_interface() -> void:
 	var remove_key := _make_button("－ キー", _remove_key, transport)
 	remove_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(remove_key)
-	key_list_toggle = _make_button("すべてのキーを見る ▼", _toggle_key_list, timeline)
+	key_list_toggle = _make_button("全キー ▼", _toggle_key_list, transport)
+	key_list_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(key_list_toggle)
 	key_list_toggle.custom_minimum_size.y = 36
 	key_scroll = ScrollContainer.new()
@@ -438,7 +439,7 @@ func _build_interface() -> void:
 	anim_col.add_child(animation_picker)
 	selectors.move_child(anim_col, 0)
 	editor_scroll = ScrollContainer.new()
-	editor_scroll.custom_minimum_size.y = 130
+	editor_scroll.custom_minimum_size.y = 108
 	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -590,7 +591,7 @@ func _change_mode(new_mode: String) -> void:
 func _toggle_key_list() -> void:
 	key_list_expanded = not key_list_expanded
 	key_scroll.visible = key_list_expanded and mode == "モーション"
-	key_list_toggle.text = "キー一覧を閉じる ▲" if key_list_expanded else "すべてのキーを見る ▼"
+	key_list_toggle.text = "全キー ▲" if key_list_expanded else "全キー ▼"
 
 func _mode_shortcut(action: String) -> void:
 	match action:
@@ -634,6 +635,8 @@ func _apply_mode_layout() -> void:
 	var timeline_full: bool = mode == "モーション"
 	var time_scrub: bool = mode in ["モーション", "IK", "接触", "診断", "ベイク"]
 	timeline_panel.get_parent().visible = time_scrub
+	# The animated track already supports scrubbing; reserve the slider for other modes.
+	seek.visible = not timeline_full
 	timeline_view.visible = timeline_full
 	timeline_transport.visible = timeline_full
 	key_list_toggle.visible = timeline_full
