@@ -10,6 +10,9 @@ var preview_container: SubViewportContainer
 var preview_frame: Control
 var preview_tools_panel: PanelContainer
 var timeline_panel: VBoxContainer
+var timeline_title: Label
+var timeline_toggle: Button
+var timeline_expanded: bool = true
 var timeline_transport: HBoxContainer
 var editor_panel: VBoxContainer
 var mode_action_bar: HBoxContainer
@@ -302,12 +305,16 @@ func _build_interface() -> void:
 	timeline_panel = _panel(layout, Color("232936"))
 	var timeline := timeline_panel
 	var controls := _row(timeline)
-	var track_label := _add_text(controls, "動きの時間")
-	track_label.add_theme_font_size_override("font_size", 15)
+	timeline_title = _add_text(controls, "動きの時間")
+	timeline_title.add_theme_font_size_override("font_size", 15)
 	time_label = _add_text(controls, "0.00秒")
 	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	time_label.add_theme_color_override("font_color", Color("62dcd1"))
 	time_label.add_theme_font_size_override("font_size", 15)
+	timeline_toggle = _make_button("閉じる ▲", _toggle_timeline, controls)
+	timeline_toggle.custom_minimum_size.x = 90
+	timeline_toggle.tooltip_text = "キーフレームのタイムラインを開閉します"
+	_style_button(timeline_toggle)
 	seek = HSlider.new()
 	seek.min_value = 0.0
 	seek.max_value = 3.0
@@ -588,6 +595,10 @@ func _change_mode(new_mode: String) -> void:
 	editor_scroll.scroll_vertical = 0
 	_refresh_contact_markers()
 
+func _toggle_timeline() -> void:
+	timeline_expanded = not timeline_expanded
+	_apply_mode_layout()
+
 func _toggle_key_list() -> void:
 	key_list_expanded = not key_list_expanded
 	key_scroll.visible = key_list_expanded and mode == "モーション"
@@ -635,12 +646,17 @@ func _apply_mode_layout() -> void:
 	var timeline_full: bool = mode == "モーション"
 	var time_scrub: bool = mode in ["モーション", "IK", "接触", "診断", "ベイク"]
 	timeline_panel.get_parent().visible = time_scrub
-	# The animated track already supports scrubbing; reserve the slider for other modes.
-	seek.visible = not timeline_full
-	timeline_view.visible = timeline_full
-	timeline_transport.visible = timeline_full
-	key_list_toggle.visible = timeline_full
-	key_scroll.visible = timeline_full and key_list_expanded
+	# In motion mode, folding the keyframe menu retains a compact time scrubber.
+	# The transport, diamond track and key list are hidden without losing any edits.
+	var show_keyframes: bool = timeline_full and timeline_expanded
+	timeline_title.text = "キーフレーム" if timeline_full else "動きの時間"
+	timeline_toggle.visible = timeline_full
+	timeline_toggle.text = "閉じる ▲" if timeline_expanded else "開く ▼"
+	seek.visible = not show_keyframes
+	timeline_view.visible = show_keyframes
+	timeline_transport.visible = show_keyframes
+	key_list_toggle.visible = show_keyframes
+	key_scroll.visible = show_keyframes and key_list_expanded
 	var show_transform_tools: bool = mode in ["階層", "モーション"]
 	for name in tool_buttons:
 		tool_buttons[name].visible = show_transform_tools
