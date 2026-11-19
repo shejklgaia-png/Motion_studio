@@ -41,13 +41,17 @@ func _verify_layout() -> void:
 	if not editor_body.visible:
 		_fail("Inspector folding did not reopen")
 		return
-	ui.call("_show_help")
-	await process_frame
-	var popup: AcceptDialog = ui.get("help_popup")
-	if popup == null or popup.dialog_text.length() > 170:
-		_fail("Guided tutorial is missing or too long")
-		return
-	print("MOTION STUDIO UI PASS: mobile selectors, viewport, modes, folding, compact help")
+	# Tutorial must not interrupt first launch or occupy the header/menu.
+	for child in ui.get_children():
+		if child is AcceptDialog:
+			_fail("Tutorial popup still exists")
+			return
+	var menu: MenuButton = ui.get("more_menu")
+	for i in range(menu.get_popup().item_count):
+		if menu.get_popup().get_item_text(i).contains("使い方"):
+			_fail("Tutorial option still exists in actions menu")
+			return
+	print("MOTION STUDIO UI PASS: mobile selectors, viewport, modes, folding, tutorial removed")
 	quit(0)
 
 func _fail(message: String) -> void:
