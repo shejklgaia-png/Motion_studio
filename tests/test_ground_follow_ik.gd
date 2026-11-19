@@ -15,10 +15,20 @@ func _verify() -> void:
 	var rest: Dictionary = rig.rest.duplicate(true)
 	var left: Dictionary = rest.duplicate(true)
 	var right: Dictionary = rest.duplicate(true)
-	left["胴体"]["position"][1] = 1.95
-	right["胴体"]["position"][1] = 1.93
-	left["前左上肢"]["rotation"][2] = -14.0
-	right["前左上肢"]["rotation"][2] = 14.0
+	# Make the FK animation visibly penetrate the floor, rather than relying
+	# on the sample's near-zero clearance at its original body height.
+	var left_body: Dictionary = left["胴体"].duplicate(true)
+	left_body["position"] = [0.0, 1.50, 0.0]
+	left["胴体"] = left_body
+	var right_body: Dictionary = right["胴体"].duplicate(true)
+	right_body["position"] = [0.0, 1.48, 0.0]
+	right["胴体"] = right_body
+	var left_arm: Dictionary = left["前左上肢"].duplicate(true)
+	left_arm["rotation"] = [0.0, 0.0, -14.0]
+	left["前左上肢"] = left_arm
+	var right_arm: Dictionary = right["前左上肢"].duplicate(true)
+	right_arm["rotation"] = [0.0, 0.0, 14.0]
+	right["前左上肢"] = right_arm
 	engine.frames = [
 		{"time": 0.0, "poses": rest.duplicate(true)},
 		{"time": 0.3, "poses": left.duplicate(true)},
@@ -39,12 +49,14 @@ func _verify() -> void:
 	var end: Node3D = rig.parts[chain["end"]]
 	var tip: Vector3 = MotionRig.from_array(chain["tip"])
 	var any_penetration: bool = false
+	var baseline_y: Array[float] = []
 	var seen_x: Array[float] = []
 	for t in [0.35, 0.55, 0.8, 1.05, 1.25]:
 		chain["enabled"] = false
 		engine.evaluate(t)
 		var authored: Vector3 = end.to_global(tip)
 		var raw_floor: float = engine._ground_surface_min_y(chain)
+		baseline_y.append(raw_floor)
 		if raw_floor < -0.04:
 			any_penetration = true
 		chain["enabled"] = true
@@ -59,7 +71,7 @@ func _verify() -> void:
 			return
 		seen_x.append(actual.x)
 	if not any_penetration:
-		_fail("Regression animation did not exercise the penetration case")
+		_fail("Regression animation did not exercise the penetration case: " + str(baseline_y))
 		return
 	var horizontal_span: float = seen_x.max() - seen_x.min()
 	if horizontal_span < 0.25:
