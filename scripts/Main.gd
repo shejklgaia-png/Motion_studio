@@ -9,6 +9,13 @@ var viewport: SubViewport
 var preview_container: SubViewportContainer
 var preview_frame: Control
 var preview_tools_panel: PanelContainer
+var timeline_panel: VBoxContainer
+var timeline_transport: HBoxContainer
+var editor_panel: VBoxContainer
+var mode_action_bar: HBoxContainer
+var part_selector_label: Label
+var animation_selector_label: Label
+var key_list_expanded: bool = false
 var file_menu: MenuButton
 var more_menu: MenuButton
 var part_select_popup: PopupPanel
@@ -89,6 +96,7 @@ func _ready() -> void:
 	_update_timeline()
 	_update_gizmo()
 	_refresh_action_hint()
+	_apply_mode_layout()
 	_update_history_buttons()
 	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
 	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
@@ -291,7 +299,8 @@ func _build_interface() -> void:
 	action_hint.add_theme_color_override("font_color", Color("b6d6f4"))
 	selection_bar = _panel(layout, Color("292f3b"))
 
-	var timeline := _panel(layout, Color("232936"))
+	timeline_panel = _panel(layout, Color("232936"))
+	var timeline := timeline_panel
 	var controls := _row(timeline)
 	var track_label := _add_text(controls, "動きの時間")
 	track_label.add_theme_font_size_override("font_size", 15)
@@ -310,7 +319,8 @@ func _build_interface() -> void:
 	timeline_view.seek_requested.connect(_on_user_seek)
 	timeline_view.key_move_requested.connect(_on_key_move_requested)
 	timeline.add_child(timeline_view)
-	var transport := _row(timeline)
+	timeline_transport = _row(timeline)
+	var transport := timeline_transport
 	for item in [["◀", -1.0], ["▶|", 1.0]]:
 		var step_sign: float = float(item[1])
 		var step_button := _make_button(str(item[0]), func(): _seek_by(step_sign / float(motion.fps)), transport)
@@ -322,7 +332,8 @@ func _build_interface() -> void:
 	var remove_key := _make_button("－ キー", _remove_key, transport)
 	remove_key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(remove_key)
-	key_list_toggle = _make_button("すべてのキーを見る ▼", _toggle_key_list, timeline)
+	key_list_toggle = _make_button("全キー ▼", _toggle_key_list, transport)
+	key_list_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_button(key_list_toggle)
 	key_list_toggle.custom_minimum_size.y = 36
 	key_scroll = ScrollContainer.new()
@@ -334,7 +345,10 @@ func _build_interface() -> void:
 	key_row = _row(key_scroll)
 
 	# The mode tabs remain visible; the large inspector is collapsible.
-	var editor := _panel(layout, Color("272d3a"))
+	editor_panel = _panel(layout, Color("272d3a"))
+	var editor := editor_panel
+	editor_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	editor_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var editor_head := _row(editor)
 	editor_title = _add_text(editor_head, "編集：モーション", true)
 	editor_title.add_theme_font_size_override("font_size", 15)
@@ -342,6 +356,8 @@ func _build_interface() -> void:
 	editor_toggle = _make_button("閉じる ▲", _toggle_editor, editor_head)
 	editor_toggle.custom_minimum_size.x = 92
 	_style_button(editor_toggle)
+	mode_action_bar = _row(editor)
+	mode_action_bar.add_theme_constant_override("separation", 5)
 	var tabs_scroll := ScrollContainer.new()
 	tabs_scroll.custom_minimum_size.y = 44
 	tabs_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -380,14 +396,15 @@ func _build_interface() -> void:
 		if id >= 0 and id < ADVANCED_MODES.size():
 			_change_mode(ADVANCED_MODES[id]))
 	editor_body = VBoxContainer.new()
+	editor_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_body.add_theme_constant_override("separation", 5)
 	editor.add_child(editor_body)
 	var selectors := _row(selection_bar)
 	var part_col := VBoxContainer.new()
 	part_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(part_col)
-	var part_text := _add_text(part_col, "② 動かす部位")
-	part_text.add_theme_font_size_override("font_size", 13)
+	part_selector_label = _add_text(part_col, "② 動かす部位")
+	part_selector_label.add_theme_font_size_override("font_size", 13)
 	part_picker = OptionButton.new()
 	part_picker.fit_to_longest_item = false
 	part_picker.clip_text = true
@@ -403,8 +420,8 @@ func _build_interface() -> void:
 	var anim_col := VBoxContainer.new()
 	anim_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selectors.add_child(anim_col)
-	var anim_text := _add_text(anim_col, "① モーション選択")
-	anim_text.add_theme_font_size_override("font_size", 13)
+	animation_selector_label = _add_text(anim_col, "① モーション選択")
+	animation_selector_label.add_theme_font_size_override("font_size", 13)
 	animation_picker = OptionButton.new()
 	animation_picker.fit_to_longest_item = false
 	animation_picker.clip_text = true
@@ -422,7 +439,7 @@ func _build_interface() -> void:
 	anim_col.add_child(animation_picker)
 	selectors.move_child(anim_col, 0)
 	editor_scroll = ScrollContainer.new()
-	editor_scroll.custom_minimum_size.y = 130
+	editor_scroll.custom_minimum_size.y = 108
 	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -430,6 +447,7 @@ func _build_interface() -> void:
 	editor_body.add_child(editor_scroll)
 	inspector = VBoxContainer.new()
 	inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inspector.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inspector.add_theme_constant_override("separation", 10)
 	editor_scroll.add_child(inspector)
 
@@ -558,6 +576,7 @@ func _change_mode(new_mode: String) -> void:
 	mode = new_mode
 	editor_body.show()
 	editor_toggle.text = "閉じる ▲"
+	_apply_mode_layout()
 	for name in ["階層", "モーション", "IK"]:
 		_style_button(mode_buttons[name], name == mode)
 	_style_button(advanced_menu, mode in ADVANCED_MODES)
@@ -570,8 +589,78 @@ func _change_mode(new_mode: String) -> void:
 	_refresh_contact_markers()
 
 func _toggle_key_list() -> void:
-	key_scroll.visible = not key_scroll.visible
-	key_list_toggle.text = "キー一覧を閉じる ▲" if key_scroll.visible else "すべてのキーを見る ▼"
+	key_list_expanded = not key_list_expanded
+	key_scroll.visible = key_list_expanded and mode == "モーション"
+	key_list_toggle.text = "全キー ▲" if key_list_expanded else "全キー ▼"
+
+func _mode_shortcut(action: String) -> void:
+	match action:
+		"parts": _open_part_selector()
+		"motion": _change_mode("モーション")
+		"ik": _change_mode("IK")
+		"contact": _change_mode("接触")
+		"diagnose": _refresh_inspector()
+		"add_ik": _add_ik_chain()
+		"add_key": _insert_key()
+		"remove_key": _remove_key()
+		"bake": _run_ik_fk_bake()
+		"export": _file_dialog("export")
+
+func _rebuild_mode_actions() -> void:
+	if mode_action_bar == null:
+		return
+	for child in mode_action_bar.get_children():
+		mode_action_bar.remove_child(child)
+		child.queue_free()
+	var actions: Array = []
+	match mode:
+		"階層": actions = [["パーツ検索", "parts"], ["選択した部位を編集", "motion"]]
+		"モーション": actions = [["パーツ検索", "parts"], ["＋キー", "add_key"], ["－キー", "remove_key"]]
+		"IK": actions = [["IKを追加", "add_ik"], ["パーツ検索", "parts"], ["足先の固定へ", "contact"]]
+		"制約": actions = [["パーツ検索", "parts"], ["モーション編集", "motion"]]
+		"接触": actions = [["IK設定", "ik"], ["パーツ検索", "parts"]]
+		"診断": actions = [["もう一度診断", "diagnose"], ["IK設定", "ik"]]
+		"ベイク": actions = [["▶ ベイク実行", "bake"], ["Godotに書き出す", "export"]]
+	for spec in actions:
+		var action_id: String = str(spec[1])
+		var button := _make_button(str(spec[0]), func(): _mode_shortcut(action_id), mode_action_bar)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_button(button, action_id in ["add_key", "add_ik", "bake"])
+
+func _apply_mode_layout() -> void:
+	if preview_frame == null or editor_panel == null or timeline_panel == null or editor_body == null:
+		return
+	# Keep the 3D view usable, while letting the mode-specific inspector fill the rest.
+	# Only animation editing needs the large keyframe track and transport controls.
+	var timeline_full: bool = mode == "モーション"
+	var time_scrub: bool = mode in ["モーション", "IK", "接触", "診断", "ベイク"]
+	timeline_panel.get_parent().visible = time_scrub
+	# The animated track already supports scrubbing; reserve the slider for other modes.
+	seek.visible = not timeline_full
+	timeline_view.visible = timeline_full
+	timeline_transport.visible = timeline_full
+	key_list_toggle.visible = timeline_full
+	key_scroll.visible = timeline_full and key_list_expanded
+	var show_transform_tools: bool = mode in ["階層", "モーション"]
+	for name in tool_buttons:
+		tool_buttons[name].visible = show_transform_tools
+	preview_tools_panel.offset_top = -169.0 if show_transform_tools else -65.0
+	var editor_container: Control = editor_panel.get_parent()
+	var expanded: bool = editor_body.visible
+	editor_container.size_flags_vertical = Control.SIZE_EXPAND_FILL if expanded else Control.SIZE_FILL
+	editor_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL if expanded else Control.SIZE_FILL
+	mode_action_bar.visible = expanded
+	preview_frame.size_flags_stretch_ratio = float({
+		"階層": 1.0, "モーション": 1.1, "IK": 1.0,
+		"制約": 0.9, "接触": 1.0, "診断": 1.0, "ベイク": 1.0
+	}.get(mode, 1.0))
+	editor_container.size_flags_stretch_ratio = float({
+		"階層": 1.7, "モーション": 1.3, "IK": 1.6,
+		"制約": 1.9, "接触": 1.7, "診断": 1.7, "ベイク": 1.6
+	}.get(mode, 1.5))
+	part_selector_label.text = "対象パーツ" if mode not in ["モーション", "階層"] else "② 動かす部位"
+	animation_selector_label.text = "確認する動き" if mode not in ["モーション", "階層"] else "① モーション選択"
+	_rebuild_mode_actions()
 
 func _refresh_action_hint() -> void:
 	if action_hint == null:
@@ -593,6 +682,7 @@ func _refresh_action_hint() -> void:
 func _toggle_editor() -> void:
 	editor_body.visible = not editor_body.visible
 	editor_toggle.text = "閉じる ▲" if editor_body.visible else "開く ▼"
+	_apply_mode_layout()
 
 func _show_help() -> void:
 	guide_step = 0
@@ -858,6 +948,7 @@ func _on_outliner_selected(name: String) -> void:
 
 func _inspector_outliner() -> void:
 	outliner = MotionOutliner.new()
+	outliner.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inspector.add_child(outliner)
 	outliner.part_selected.connect(_on_outliner_selected)
 	outliner.set_model(rig, selected_part)
