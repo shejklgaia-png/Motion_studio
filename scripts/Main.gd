@@ -705,7 +705,7 @@ func _refresh_action_hint() -> void:
 	var descriptions: Dictionary = {
 		"階層": "部位をタップして選択 →「動き編集」で回転を変更",
 		"モーション": "黄色い◆で時間選択／ドラッグでキー移動 → 関節を回転",
-		"IK": "青いTLバーの端で適用時間、中央で区間を移動。足先は3Dハンドルで調整",
+		"IK": "青いTLバーでIK・接触回避の適用時間を指定。目標点は3Dハンドルで調整",
 		"制約": "関節を選び、動かせる角度や範囲を設定",
 		"接触": "足先の床固定・滑走・物体追従を設定",
 		"診断": "エラーと接地状態を確認",
@@ -1082,7 +1082,7 @@ func _refresh_inspector() -> void:
 	var hints := {
 		"階層": "パーツの親子関係を確認して部位を選択",
 		"モーション": "部位を選び、位置・回転を変更",
-		"IK": "脚の目標位置や計算方法を設定",
+		"IK": "IK目標と時間指定の接触回避を設定",
 		"制約": "動かせる範囲を設定",
 		"接触": "箱や球を置いて接触をテスト",
 		"診断": "動作の問題を確認",
@@ -1233,12 +1233,12 @@ func _set_chain_prop(key: String, value: Variant) -> void:
 	_refresh_timeline_view()
 	_update_history_buttons()
 
-func _set_ground_follow(enabled: bool) -> void:
+func _set_collision_avoid(enabled: bool) -> void:
 	if selected_chain < 0 or selected_chain >= rig.chains.size():
 		return
 	motion.record_undo()
 	var chain: Dictionary = rig.chains[selected_chain]
-	chain["ground_follow"] = enabled
+	chain["collision_avoid"] = enabled
 	if enabled:
 		chain["enabled"] = true
 	motion.evaluate(motion.play_time)
@@ -1312,18 +1312,38 @@ func _inspector_ik() -> void:
 			pole[axis] = value
 			_set_chain_prop("pole", pole))
 	_number_field("IK強度", chain["weight"], 0.0, 1.0, 0.05, func(v: float): _set_chain_prop("weight", v))
-	_add_text(inspector, "地表追従IK（なぎ払い）", true)
-	_check("元のなぎ払い軌道に沿って地表をなぞる", bool(chain.get("ground_follow", false)),
-		func(on: bool): _set_ground_follow(on))
-	if bool(chain.get("ground_follow", false)):
-		_add_text(inspector, "元モーションの前後・左右の曲線を残し、足先メッシュの下面が床に接するようIKで高さを補正します。IKは自動的に有効になります。")
-		_check("下肢のメッシュもめり込み判定", bool(chain.get("ground_include_lower", true)),
-			func(on: bool): _set_chain_prop("ground_include_lower", on))
-		_number_field("地表の高さ（m）", float(chain.get("ground_height", 0.0)), -10.0, 10.0, 0.01,
-			func(v: float): _set_chain_prop("ground_height", v))
-		_number_field("接地余裕（m）", float(chain.get("ground_clearance", 0.005)), 0.0, 0.25, 0.005,
-			func(v: float): _set_chain_prop("ground_clearance", v))
-		_add_text(inspector, "青いIK適用バーでなぎ払いの接地区間を指定。地表追従中は同じ脚の「床に固定」より優先します。届かない姿勢は診断に表示されます。")
+	_add_text(inspector, "接触回避IK（時間指定）", true)
+	_check("接触した時だけIKで避ける", bool(chain.get("collision_avoid", false)),
+		func(on: bool): _set_collision_avoid(on))
+	if bool(chain.get("collision_avoid", false)):
+		_add_text(inspector, "モーションの元の軌道を残し、指定時間内に対象へめり込む時だけ関節を補正します。離れている時は姿勢を変更しません。")
+		_check("地面との接触を回避", bool(chain.get("collision_floor", true)),
+			func(on: bool): _set_chain_prop("collision_floor", on))
+		_check("物体との接触を回避", bool(chain.get("collision_objects", false)),
+			func(on: bool): _set_chain_prop("collision_objects", on))
+		if bool(chain.get("collision_objects", false)):
+			_add_text(inspector, "接触モードで配置した箱・球・カプセルを対象にします。")
+			var selector_row := _row(inspector)
+			_add_text(selector_row, "回避する物体")
+			var object_picker := OptionButton.new()
+			object_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			object_picker.clip_text = true
+			object_picker.add_item("すべてのテスト物体")
+			for test_object in rig.test_objects:
+				object_picker.add_item(str(test_object["node"].name))
+			var object_index: int = int(chain.get("collision_object_index", -1))
+			object_picker.select(clampi(object_index + 1, 0, rig.test_objects.size()))
+			object_picker.item_selected.connect(func(i: int): _set_chain_prop("collision_object_index", i - 1))
+			selector_row.add_child(object_picker)
+			if rig.test_objects.is_empty():
+				_add_text(inspector, "テスト物体がありません。「詳細機能 ▾」→「接触」で物体を配置してください。")
+		_check("中間関節側のメッシュも判定", bool(chain.get("collision_include_mid", true)),
+			func(on: bool): _set_chain_prop("collision_include_mid", on))
+		_number_field("地面の高さ（m）", float(chain.get("collision_height", 0.0)), -10.0, 10.0, 0.01,
+			func(v: float): _set_chain_prop("collision_height", v))
+		_number_field("接触回避の余裕（m）", float(chain.get("collision_margin", 0.005)), 0.0, 0.25, 0.005,
+			func(v: float): _set_chain_prop("collision_margin", v))
+		_add_text(inspector, "青い「接触回避」バーの両端で有効時間を指定します。床固定と違い、接触がなければ元のモーションを維持します。回避できない場合は診断に残差を表示します。")
 	_add_text(inspector, "上の青いバー：両端をドラッグで時間変更／中央で区間移動（1フレーム単位）")
 	_number_field("開始 (秒)", chain["start"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("start", v))
 	_number_field("終了 (秒)", chain["finish"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("finish", v))
@@ -1556,7 +1576,7 @@ func _show_raw_pose() -> void:
 
 func _inspector_diagnostics() -> void:
 	_add_text(inspector, "リアルタイム診断", true)
-	_add_text(inspector, "IK目標・接地固定の誤差と複数IKの関節共有を検査します。")
+	_add_text(inspector, "IK目標・接触回避の残差・関節共有の競合を検査します。")
 	_check("IKと制約を除いた原本姿勢を表示", show_original, func(on: bool):
 		show_original = on
 		motion.evaluate(motion.play_time)
