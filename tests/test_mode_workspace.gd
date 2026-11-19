@@ -71,7 +71,7 @@ func _run() -> void:
 			_fail("Editor stopped filling the screen in mode " + name)
 			return
 		if preview.size.y < 180 or editor_scroll.size.y < 120:
-			_fail("Mode loses its preview or editor area: " + name)
+			_fail("Mode loses preview/editor area: %s (preview=%.1f editor=%.1f)" % [name, preview.size.y, editor_scroll.size.y])
 			return
 		if name == "階層":
 			var outliner: MotionOutliner = app.get("outliner")
