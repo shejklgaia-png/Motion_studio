@@ -53,21 +53,18 @@ var mode_picker: OptionButton
 var mode_buttons: Dictionary = {}
 var advanced_menu: MenuButton
 var editor_title: Label
-var action_hint: Label
 var key_scroll: ScrollContainer
 var key_list_toggle: Button
 var selection_bar: VBoxContainer
 var editor_body: VBoxContainer
 var editor_scroll: ScrollContainer
 var editor_toggle: Button
-var guide_step: int = 0
 var animation_picker: OptionButton
 var camera_focus: Vector3 = Vector3(0, 1.05, 0)
 var play_button: Button
 var undo_button: Button
 var redo_button: Button
 var fit_button: Button
-var help_popup: AcceptDialog
 var selected_part: String = "胴体"
 var selected_chain: int = 0
 var selected_test: int = -1
@@ -91,19 +88,16 @@ func _ready() -> void:
 	_build_stage()
 	motion = MotionEngine.new()
 	motion.setup(rig)
-	motion.add_sample_animation()
+	motion.add_sample_walk_animation()
 	_refresh_part_picker()
 	_populate_animation_picker(false)
 	_refresh_inspector()
 	_refresh_key_buttons()
 	_update_timeline()
 	_update_gizmo()
-	_refresh_action_hint()
 	_apply_mode_layout()
 	_update_history_buttons()
-	_note("まずは ▶ 再生 → 脚をタップ → 下の数値を変更、の順に試してください。")
-	if not FileAccess.file_exists("user://motion_studio_guide_seen.txt"):
-		call_deferred("_show_help")
+	_note("サンプル：4脚IK歩行（▶ 再生で確認できます）")
 
 func _make_button(label: String, callback: Callable, owner: Node) -> Button:
 	var button := Button.new()
@@ -179,11 +173,6 @@ func _build_interface() -> void:
 	var title := _add_text(header, "MOTION STUDIO", true)
 	title.add_theme_font_size_override("font_size", 17)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var help_button := _make_button("？", _show_help, header)
-	help_button.custom_minimum_size.x = 50
-	_style_button(help_button)
-	help_button.tooltip_text = "短い3ステップ操作ガイド"
-
 	var toolbar := _row(layout)
 	file_menu = MenuButton.new()
 	file_menu.text = "ファイル ▾"
@@ -295,11 +284,6 @@ func _build_interface() -> void:
 	pan_button.custom_minimum_size = Vector2(79, 44)
 	_style_button(pan_button)
 
-	action_hint = _add_text(layout, "① ファイルから読み込む　② 動きを選ぶ　③ 部位を選んで編集")
-	action_hint.autowrap_mode = TextServer.AUTOWRAP_OFF
-	action_hint.clip_text = true
-	action_hint.add_theme_font_size_override("font_size", 13)
-	action_hint.add_theme_color_override("font_color", Color("b6d6f4"))
 	selection_bar = _panel(layout, Color("292f3b"))
 
 	timeline_panel = _panel(layout, Color("232936"))
@@ -611,7 +595,6 @@ func _change_mode(new_mode: String) -> void:
 	advanced_menu.text = "詳細：%s ▾" % mode if mode in ADVANCED_MODES else "詳細機能 ▾"
 	editor_title.text = "編集：%s" % mode
 	_refresh_inspector()
-	_refresh_action_hint()
 	_update_gizmo()
 	editor_scroll.scroll_vertical = 0
 	_refresh_contact_markers()
@@ -699,55 +682,10 @@ func _apply_mode_layout() -> void:
 	animation_selector_label.text = "確認する動き" if mode not in ["モーション", "階層"] else "① モーション選択"
 	_rebuild_mode_actions()
 
-func _refresh_action_hint() -> void:
-	if action_hint == null:
-		return
-	var descriptions: Dictionary = {
-		"階層": "部位をタップして選択 →「動き編集」で回転を変更",
-		"モーション": "黄色い◆で時間選択／ドラッグでキー移動 → 関節を回転",
-		"IK": "青いTLバーでIK・接触回避の適用時間を指定。目標点は3Dハンドルで調整",
-		"制約": "関節を選び、動かせる角度や範囲を設定",
-		"接触": "足先の床固定・滑走・物体追従を設定",
-		"診断": "エラーと接地状態を確認",
-		"ベイク": "IKを計算した動きを普通のキーに変換"
-	}
-	if rig == null or rig.imported_source == "sample":
-		action_hint.text = "ファイル ▾ でbbmodelを読込（サンプルでも試せます）"
-	else:
-		action_hint.text = str(descriptions.get(mode, "時間と部位を選んで編集"))
-
 func _toggle_editor() -> void:
 	editor_body.visible = not editor_body.visible
 	editor_toggle.text = "閉じる ▲" if editor_body.visible else "開く ▼"
 	_apply_mode_layout()
-
-func _show_help() -> void:
-	guide_step = 0
-	if help_popup == null:
-		help_popup = AcceptDialog.new()
-		help_popup.title = "Motion Studio 操作ガイド"
-		help_popup.min_size = Vector2i(300, 170)
-		help_popup.confirmed.connect(_advance_help)
-		add_child(help_popup)
-	_display_help_step()
-	var file := FileAccess.open("user://motion_studio_guide_seen.txt", FileAccess.WRITE)
-	if file != null:
-		file.store_string("seen")
-
-func _display_help_step() -> void:
-	var pages := [
-		"1 / 3  モデルを読み込む\n\n上の「ファイル」→「モデルを読み込む」で .bbmodel を選びます。\nサンプルモデルのままでも操作を試せます。",
-		"2 / 3  部位とモーションを選ぶ\n\n上の「階層」で関節の親子関係を確認。\n「モーション」で部位やアニメーションを選びます。",
-		"3 / 3  タイムラインで編集\n\n黄色い◆をタップして時間を選択。\nドラッグしてキーを移動でき、↶で取り消せます。"
-	]
-	help_popup.dialog_text = pages[guide_step]
-	help_popup.ok_button_text = "完了" if guide_step == 2 else "次へ"
-	help_popup.popup_centered(Vector2i(400, 220))
-
-func _advance_help() -> void:
-	if guide_step < 2:
-		guide_step += 1
-		call_deferred("_display_help_step")
 
 func _build_stage() -> void:
 	stage = Node3D.new()
@@ -899,7 +837,7 @@ func _populate_animation_picker(auto_apply: bool) -> void:
 	if animation_picker == null:
 		return
 	animation_picker.clear()
-	animation_picker.add_item("基本姿勢（モーションなし）")
+	animation_picker.add_item("サンプル：4脚IK歩行" if rig.imported_source == "sample" and motion.sample_walk else "基本姿勢（モーションなし）")
 	for animation in rig.bb_animations:
 		animation_picker.add_item(str(animation.get("name", "名前なし")))
 	animation_picker.disabled = rig.bb_animations.is_empty()
@@ -947,7 +885,6 @@ func _after_model_change(note: String) -> void:
 	_refresh_key_buttons()
 	_update_timeline()
 	_update_gizmo()
-	_refresh_action_hint()
 	_refresh_contact_markers()
 	_note(note)
 
@@ -966,7 +903,6 @@ func _refresh_part_picker() -> void:
 	_update_gizmo()
 	_update_selection_badge()
 	_refresh_timeline_view()
-	_refresh_action_hint()
 
 func _update_selection_badge() -> void:
 	if selection_badge != null:
@@ -1032,6 +968,8 @@ func _seek_by(seconds: float) -> void:
 	_seek_to(motion.play_time + seconds)
 
 func _toggle_playback() -> void:
+	if not playing and motion.play_time >= motion.duration - 0.001:
+		_seek_to(0.0)
 	playing = not playing
 	play_button.text = "Ⅱ 停止" if playing else "▶ 再生"
 	_update_gizmo()
@@ -1056,9 +994,14 @@ func _process(delta: float) -> void:
 		return
 	if playing:
 		var next_time := motion.play_time + delta * playback_speed
-		if next_time > motion.duration:
-			next_time = fmod(next_time, motion.duration)
-		_seek_to(next_time)
+		if next_time >= motion.duration and motion.sample_walk:
+			_seek_to(motion.duration)
+			playing = false
+			play_button.text = "▶ 再生"
+		else:
+			if next_time > motion.duration:
+				next_time = fmod(next_time, motion.duration)
+			_seek_to(next_time)
 	save_clock += delta
 	status_clock += delta
 	if status_clock >= 0.25:
