@@ -3,6 +3,7 @@ class_name MotionTimelineView
 
 signal seek_requested(time: float)
 signal key_move_requested(original_time: float, destination_time: float)
+signal ik_range_requested(chain_index: int, start_time: float, finish_time: float)
 
 const LABEL_WIDTH := 94.0
 const HEADER_H := 27.0
@@ -15,6 +16,9 @@ const BACK := Color("191f29")
 const DIVIDER := Color("3a4353")
 const TEXT := Color("cbd4e1")
 const KEY := Color("e2bb70")
+const IK_BAR := Color("479cd8")
+const IK_INACTIVE := Color("778393")
+const IK_ROW_H := 43.0
 
 var clip_duration: float = 3.0
 var play_time: float = 0.0
@@ -28,6 +32,19 @@ var key_drag_start: float = -1.0
 var key_drag_preview: float = -1.0
 var dragging_key: bool = false
 var mouse_suppression_until_ms: int = 0
+var key_rows_visible: bool = true
+var ik_visible: bool = false
+var ik_index: int = -1
+var ik_name: String = ""
+var ik_enabled: bool = false
+var ik_start: float = 0.0
+var ik_finish: float = 0.0
+var ik_preview_start: float = 0.0
+var ik_preview_finish: float = 0.0
+var ik_drag_mode: String = ""
+var ik_press_time: float = 0.0
+var ik_original_start: float = 0.0
+var ik_original_finish: float = 0.0
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(0, HEADER_H + ROW_H * 3.0 + 7.0)
@@ -66,6 +83,34 @@ func set_timeline(frames: Array, part: String, duration: float, at_time: float, 
 				keys[channel].append(t)
 			last_values[channel] = values.duplicate()
 	queue_redraw()
+
+# Keep one selected IK lane on small portrait screens. In the IK workspace
+# the large FK channel rows are hidden, leaving room for the 3D preview.
+func set_ik_track(chains: Array, selected_index: int, show_keys: bool = true) -> void:
+	key_rows_visible = show_keys
+	ik_visible = not chains.is_empty() or not show_keys
+	ik_index = clampi(selected_index, 0, chains.size() - 1) if not chains.is_empty() else -1
+	ik_name = "IK未設定"
+	ik_enabled = false
+	ik_start = 0.0
+	ik_finish = clip_duration
+	if ik_index >= 0:
+		var chain: Dictionary = chains[ik_index]
+		ik_name = str(chain.get("name", "IK"))
+		ik_enabled = bool(chain.get("enabled", false))
+		ik_start = clampf(float(chain.get("start", 0.0)), 0.0, clip_duration)
+		ik_finish = clampf(float(chain.get("finish", clip_duration)), ik_start, clip_duration)
+	if ik_drag_mode == "":
+		ik_preview_start = ik_start
+		ik_preview_finish = ik_finish
+	custom_minimum_size.y = HEADER_H + (float(ROWS.size()) * ROW_H if show_keys else 0.0) + (IK_ROW_H if ik_visible else 0.0) + 7.0
+	queue_redraw()
+
+func _ik_track_y() -> float:
+	return HEADER_H + (float(ROWS.size()) * ROW_H if key_rows_visible else 0.0)
+
+func _is_ik_row(point: Vector2) -> bool:
+	return ik_visible and point.y >= _ik_track_y() and point.y < _ik_track_y() + IK_ROW_H
 
 func set_playhead(value: float) -> void:
 	play_time = clampf(value, 0.0, clip_duration)
@@ -132,7 +177,7 @@ func _draw() -> void:
 		Vector2(head - 6, 1), Vector2(head + 6, 1), Vector2(head, 10)]), BLUE)
 
 func _find_key_under_touch(point: Vector2) -> float:
-	if point.x < LABEL_WIDTH - 5.0 or point.y < HEADER_H:
+	if not key_rows_visible or point.x < LABEL_WIDTH - 5.0 or point.y < HEADER_H or point.y >= _ik_track_y():
 		return -1.0
 	var row: int = clampi(int((point.y - HEADER_H) / ROW_H), 0, ROWS.size() - 1)
 	var best: float = 17.0
@@ -154,7 +199,7 @@ func _jump_to_position(position: Vector2) -> void:
 	if position.x < LABEL_WIDTH:
 		return
 	var requested: float = _x_to_time(position.x)
-	if position.y >= HEADER_H:
+	if key_rows_visible and position.y >= HEADER_H and not _is_ik_row(position):
 		var row: int = clampi(int((position.y - HEADER_H) / ROW_H), 0, ROWS.size() - 1)
 		for value in keys.get(ROWS[row], []):
 			if absf(_time_to_x(float(value)) - position.x) < 17.0:
