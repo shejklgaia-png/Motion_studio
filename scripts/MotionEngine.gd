@@ -9,6 +9,8 @@ var frames: Array = []
 var constraints: Dictionary = {}
 # Explicit, deterministic foot contacts for offline IK/FK baking.
 var contact_constraints: Array = []
+# Demonstration gait uses IK targets evaluated at each frame; FK only stores torso travel.
+var sample_walk: bool = false
 var play_time: float = 0.0
 var warnings: Array = []
 var history: Array[String] = []
@@ -23,6 +25,7 @@ const MAX_UNDO := 50
 
 func setup(model: MotionRig) -> void:
 	rig = model
+	sample_walk = false
 	constraints.clear()
 	contact_constraints.clear()
 	bake_source.clear()
@@ -51,11 +54,83 @@ func add_sample_animation() -> void:
 	frames.insert(2, {"time": 1.4, "poses": sample2})
 	evaluate(0.0)
 
+# A short, physically planted walking demonstration rather than an endlessly
+# looping gait with a teleporting body. Two diagonal pairs lift, advance and
+# land. Every stance foot keeps a fixed world-space anchor through body travel.
+# Users can inspect the active IK chains and bake the result as ordinary FK.
+func add_sample_walk_animation() -> void:
+	if rig == null or rig.imported_source != "sample":
+		return
+	sample_walk = true
+	duration = 3.4
+	fps = 60
+	constraints.clear()
+	contact_constraints.clear()
+	frames.clear()
+	bake_source.clear()
+	bake_report.clear()
+	history.clear()
+	future.clear()
+	var poses_at: Array = [
+		[0.0, 2.00, 0.0, 0.0, 0.0],
+		[0.7, 2.035, -0.08, 0.04, 1.25],
+		[1.4, 2.00, -0.28, -0.04, -1.25],
+		[2.1, 2.035, -0.48, 0.04, 1.25],
+		[2.8, 2.00, -0.58, 0.0, 0.0],
+		[3.4, 2.00, -0.58, 0.0, 0.0]
+	]
+	for pose_at in poses_at:
+		var pose_map: Dictionary = rig.rest.duplicate(true)
+		var body: Dictionary = pose_map["胴体"].duplicate(true)
+		body["position"] = [float(pose_at[3]), float(pose_at[1]), float(pose_at[2])]
+		body["rotation"] = [0.0, 0.0, float(pose_at[4])]
+		pose_map["胴体"] = body
+		frames.append({"time": float(pose_at[0]), "poses": pose_map})
+	for chain in rig.chains:
+		var label: String = str(chain["name"])
+		# Two diagonal pairs alternate their swing phase.
+		var first_pair: bool = label in ["前左", "後右"]
+		var original_goal: Vector3 = chain["target"].global_position
+		original_goal.y = 0.005
+		chain["enabled"] = true
+		chain["method"] = "2ボーン"
+		chain["weight"] = 1.0
+		chain["start"] = 0.0
+		chain["finish"] = duration
+		chain["pole"] = [0.25 if label.contains("右") else -0.25, 0.0,
+			-1.0 if label.begins_with("前") else 1.0]
+		chain["collision_avoid"] = false
+		chain["walk_enabled"] = true
+		chain["walk_base"] = MotionRig.vec3_array(original_goal)
+		chain["walk_takeoff"] = 0.35 if first_pair else 1.35
+		chain["walk_landing"] = 1.05 if first_pair else 2.05
+		chain["walk_forward"] = 0.62
+		chain["walk_lift"] = 0.30
+	play_time = 0.0
+	evaluate(0.0)
+
+func _sample_walk_goal(chain: Dictionary, at_time: float) -> Vector3:
+	var base: Vector3 = MotionRig.from_array(chain.get("walk_base", [0.0, 0.0, 0.0]))
+	var takeoff: float = float(chain.get("walk_takeoff", 0.35))
+	var landing: float = float(chain.get("walk_landing", 1.05))
+	var forward: float = float(chain.get("walk_forward", 0.62))
+	if at_time <= takeoff:
+		return base
+	var endpoint: Vector3 = base + Vector3(0.0, 0.0, -forward)
+	if at_time >= landing:
+		return endpoint
+	var phase: float = clampf((at_time - takeoff) / maxf(landing - takeoff, 0.001), 0.0, 1.0)
+	var smooth: float = phase * phase * (3.0 - 2.0 * phase)
+	var position: Vector3 = base.lerp(endpoint, smooth)
+	position.y += maxf(0.0, float(chain.get("walk_lift", 0.30))) * sin(PI * phase)
+	return position
+
 # Convert Blockbench channels into editable local poses, at a fixed sampling rate.
 # Keeping the source animation in rig.bb_animations allows switching without reimporting.
 func load_bb_animation(index: int) -> String:
 	if index < 0 or index >= rig.bb_animations.size():
 		return "選択されたモーションがありません"
+	sample_walk = false
 	var animation: Dictionary = rig.bb_animations[index]
 	var animators: Dictionary = animation.get("animators", {})
 	var channels: Dictionary = {}
@@ -234,6 +309,9 @@ func evaluate(at_time: float) -> void:
 	for _iteration in range(passes):
 		for index in active_indices:
 			var item: Dictionary = rig.chains[index]
+			if bool(item.get("walk_enabled", false)):
+				_solve_chain(item, _sample_walk_goal(item, play_time))
+				continue
 			if _avoidance_enabled(item):
 				if not avoidance_goals.has(index):
 					continue
@@ -305,6 +383,8 @@ func bake_ik_fk(target_fps: int = 60) -> Dictionary:
 	# Baked motion no longer requires per-frame IK or active constraints.
 	for chain in rig.chains:
 		chain["enabled"] = false
+		chain["walk_enabled"] = false
+	sample_walk = false
 	for item in contact_constraints:
 		item["enabled"] = false
 	for name in constraints.keys():
@@ -850,12 +930,14 @@ func snapshot() -> Dictionary:
 			"rotation": MotionRig.vec3_array(item["node"].rotation_degrees), "scale": MotionRig.vec3_array(item["node"].scale)})
 	return {"format": "motion-studio-v1", "source": rig.imported_source,
 		"duration": duration, "fps": fps, "time": play_time,
+		"sample_walk": sample_walk,
 		"frames": frames.duplicate(true), "constraints": constraints.duplicate(true),
 		"contacts": contact_constraints.duplicate(true),
 		"chains": chain_info, "obstacles": obstacle_info,
 		"bake_source": bake_source.duplicate(true), "bake_report": bake_report.duplicate(true)}
 
 func restore(data: Dictionary) -> void:
+	sample_walk = bool(data.get("sample_walk", false))
 	duration = float(data.get("duration", 3.0))
 	fps = int(data.get("fps", 60))
 	frames = data.get("frames", []).duplicate(true)
@@ -881,7 +963,9 @@ func restore(data: Dictionary) -> void:
 		var latest: Dictionary = rig.chains[-1]
 		for key in ["enabled", "method", "weight", "start", "finish", "pole",
 			"collision_avoid", "collision_floor", "collision_objects", "collision_object_index",
-			"collision_height", "collision_margin", "collision_include_mid"]:
+			"collision_height", "collision_margin", "collision_include_mid",
+			"walk_enabled", "walk_base", "walk_takeoff", "walk_landing",
+			"walk_forward", "walk_lift"]:
 			latest[key] = chain.get(key, latest.get(key))
 		# Old projects with ground-follow settings transparently become
 		# floor-only collision avoidance; no user settings are discarded.
