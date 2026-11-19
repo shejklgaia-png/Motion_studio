@@ -215,11 +215,39 @@ func evaluate(at_time: float) -> void:
 		var chain: Dictionary = rig.chains[i]
 		if chain.get("enabled", false) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
 			active_indices.append(i)
+	# Capture the original FK trajectory before solving any chains. A sweeping
+	# foot must retain its authored horizontal arc, not follow a linear slide.
+	var ground_goals: Dictionary = {}
+	for index in active_indices:
+		var chain: Dictionary = rig.chains[index]
+		if not bool(chain.get("ground_follow", false)):
+			continue
+		var end: Node3D = rig.parts.get(str(chain.get("end", "")))
+		if end == null:
+			continue
+		var fk_tip: Vector3 = end.to_global(MotionRig.from_array(chain["tip"]))
+		var surface_y: float = _ground_surface_min_y(chain)
+		var floor_y: float = float(chain.get("ground_height", 0.0)) + maxf(0.0, float(chain.get("ground_clearance", 0.005)))
+		fk_tip.y += floor_y - surface_y
+		ground_goals[index] = fk_tip
 	var needs_cooperation: bool = _has_shared_ik_joints(active_indices)
 	var passes: int = 3 if needs_cooperation else 1
 	for _iteration in range(passes):
 		for index in active_indices:
 			var item: Dictionary = rig.chains[index]
+			if ground_goals.has(index):
+				var sweep_goal: Vector3 = ground_goals[index]
+				_solve_chain(item, sweep_goal)
+				# Rotating the knee also rotates the foot mesh. Recheck its actual
+				# lower bounds and correct the vertical goal without changing X/Z.
+				var floor_y: float = float(item.get("ground_height", 0.0)) + maxf(0.0, float(item.get("ground_clearance", 0.005)))
+				for _correction in range(4):
+					var vertical_error: float = floor_y - _ground_surface_min_y(item)
+					if absf(vertical_error) < 0.001:
+						break
+					sweep_goal.y += vertical_error
+					_solve_chain(item, sweep_goal)
+				continue
 			var base_goal: Vector3 = item["target"].global_position
 			var goal: Dictionary = get_contact_goal(index, play_time)
 			if bool(goal.get("active", false)):
@@ -352,6 +380,45 @@ func _has_shared_ik_joints(indices: Array[int]) -> bool:
 			if counts[name] > 1:
 				return true
 	return false
+
+# Lowest possible vertex height of the animated part geometry. AABB corners
+# are intentionally conservative, including rotated/Blockbench imported meshes,
+# so no part of the rendered foot is allowed below the ground.
+func _part_mesh_min_y(part: Node3D) -> float:
+	var lowest: float = INF
+	var pending: Array[Node] = [part]
+	while not pending.is_empty():
+		var current: Node = pending.pop_back()
+		if current is MeshInstance3D:
+			var visual: MeshInstance3D = current as MeshInstance3D
+			if visual.mesh != null:
+				var box: AABB = visual.mesh.get_aabb()
+				for x in [0.0, 1.0]:
+					for y in [0.0, 1.0]:
+						for z in [0.0, 1.0]:
+							var corner: Vector3 = box.position + box.size * Vector3(x, y, z)
+							lowest = minf(lowest, (visual.global_transform * corner).y)
+		for child in current.get_children():
+			# Other registered joints have their own geometry; never descend
+			# through the entire skeleton or include unrelated leg sections.
+			if child != part and child.has_meta("part_name"):
+				continue
+			pending.append(child)
+	return lowest
+
+func _ground_surface_min_y(chain: Dictionary) -> float:
+	var lowest: float = INF
+	for field in ["mid", "end"]:
+		if field == "mid" and not bool(chain.get("ground_include_lower", true)):
+			continue
+		var part: Node3D = rig.parts.get(str(chain.get(field, "")))
+		if part != null:
+			lowest = minf(lowest, _part_mesh_min_y(part))
+	if lowest == INF:
+		var end: Node3D = rig.parts.get(str(chain.get("end", "")))
+		if end != null:
+			return end.to_global(MotionRig.from_array(chain["tip"])).y
+	return 0.0
 
 # Contact modes: floor (world y=0), world (fixed 3D point), obstacle (relative
 # to a selected test object). Slip is analytic and time-based, so scrubbing
@@ -546,6 +613,12 @@ func diagnose() -> Array:
 		var end: Node3D = rig.parts.get(chain["end"])
 		if end == null:
 			continue
+		if bool(chain.get("ground_follow", false)):
+			var lowest: float = _ground_surface_min_y(chain)
+			var floor_y: float = float(chain.get("ground_height", 0.0)) + maxf(0.0, float(chain.get("ground_clearance", 0.005)))
+			if absf(lowest - floor_y) > 0.025:
+				report.append("%s：地表追従の接地誤差 %.3fm（IKの届く範囲・関節制約を確認）" % [str(chain["name"]), absf(lowest - floor_y)])
+			continue
 		var desired: Vector3 = chain["target"].global_position
 		var contact: Dictionary = get_contact_goal(index, play_time)
 		if bool(contact.get("active", false)):
@@ -706,7 +779,8 @@ func restore(data: Dictionary) -> void:
 		if rig.chains.is_empty():
 			continue
 		var latest: Dictionary = rig.chains[-1]
-		for key in ["enabled", "method", "weight", "start", "finish", "pole"]:
+		for key in ["enabled", "method", "weight", "start", "finish", "pole", "ground_follow",
+			"ground_height", "ground_clearance", "ground_include_lower"]:
 			latest[key] = chain.get(key, latest.get(key))
 	evaluate(float(data.get("time", 0.0)))
 
