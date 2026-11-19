@@ -10,6 +10,9 @@ var preview_container: SubViewportContainer
 var preview_frame: Control
 var preview_tools_panel: PanelContainer
 var file_menu: MenuButton
+var more_menu: MenuButton
+var part_select_popup: PopupPanel
+var part_select_outliner: MotionOutliner
 var active_touches: Dictionary = {}
 var pinch_active: bool = false
 var pinch_distance: float = 0.0
@@ -198,16 +201,19 @@ func _build_interface() -> void:
 	redo_button.custom_minimum_size.x = 44
 	redo_button.tooltip_text = "編集をやり直す"
 	_style_button(redo_button)
-	var more := MenuButton.new()
-	more.text = "操作 ▾"
-	more.custom_minimum_size.y = 44
-	more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	toolbar.add_child(more)
-	_style_button(more)
-	var popup := more.get_popup()
+	more_menu = MenuButton.new()
+	more_menu.text = "操作 ▾"
+	more_menu.custom_minimum_size.y = 44
+	more_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toolbar.add_child(more_menu)
+	_style_button(more_menu)
+	var popup := more_menu.get_popup()
+	popup.add_item("パーツ選択（検索・階層）", 6)
+	popup.add_separator()
 	for item in [["取り消す", 3], ["やり直す", 4], ["使い方", 5]]:
 		popup.add_item(str(item[0]), int(item[1]))
 	popup.id_pressed.connect(_on_more_action)
+	_build_part_select_popup()
 
 	preview_frame = Control.new()
 	preview_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -435,6 +441,48 @@ func _build_interface() -> void:
 	message_label.add_theme_color_override("font_color", Color("a8b8c9"))
 	message_label.custom_minimum_size.y = 19
 
+func _build_part_select_popup() -> void:
+	# The outliner lives outside the 3D viewport, so overlay buttons cannot cover parts.
+	part_select_popup = PopupPanel.new()
+	part_select_popup.title = "パーツ選択"
+	part_select_popup.min_size = Vector2i(300, 320)
+	add_child(part_select_popup)
+	var body := MarginContainer.new()
+	for side in ["left", "top", "right", "bottom"]:
+		body.add_theme_constant_override("margin_" + side, 10)
+	part_select_popup.add_child(body)
+	body.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	body.add_child(content)
+	var heading := _row(content)
+	var title := _add_text(heading, "パーツ選択", true)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var close_button := _make_button("閉じる", func(): part_select_popup.hide(), heading)
+	close_button.custom_minimum_size.x = 80
+	_style_button(close_button)
+	part_select_outliner = MotionOutliner.new()
+	part_select_outliner.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(part_select_outliner)
+	part_select_outliner.part_selected.connect(_select_part_from_actions)
+
+func _open_part_selector() -> void:
+	if rig == null or part_select_popup == null:
+		return
+	part_select_outliner.set_model(rig, selected_part)
+	part_select_popup.popup_centered_clamped(Vector2i(350, 440), 0.85)
+	part_select_outliner.filter_box.grab_focus()
+
+func _select_part_from_actions(name: String) -> void:
+	if rig == null or not rig.parts.has(name):
+		return
+	part_select_popup.hide()
+	selected_part = name
+	_refresh_part_picker()
+	_refresh_inspector()
+	_update_gizmo()
+	_note("パーツ選択：%s" % name)
+
 func _on_file_menu_action(id: int) -> void:
 	match id:
 		10: _toolbar_action("import")
@@ -445,6 +493,7 @@ func _on_file_menu_action(id: int) -> void:
 
 func _on_more_action(id: int) -> void:
 	match id:
+		6: _open_part_selector()
 		3: _toolbar_action("undo")
 		4: _toolbar_action("redo")
 		5: _show_help()
