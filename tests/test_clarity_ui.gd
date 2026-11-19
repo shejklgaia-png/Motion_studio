@@ -85,7 +85,43 @@ func _run() -> void:
 	if part_picker.item_count != rig.parts.size():
 		_fail("Part selector no longer shows every part")
 		return
-	print("MOTION CLARITY UI PASS: primary selectors, compact modes, advanced tools, optional keys, contextual help")
+	var actions: MenuButton = app.get("more_menu")
+	var chooser_popup: PopupPanel = app.get("part_select_popup")
+	var chooser: MotionOutliner = app.get("part_select_outliner")
+	if actions == null or chooser_popup == null or chooser == null:
+		_fail("Searchable part selector is missing from the actions menu")
+		return
+	var found_part_action := false
+	for i in range(actions.get_popup().item_count):
+		if actions.get_popup().get_item_id(i) == 6 and actions.get_popup().get_item_text(i).contains("パーツ選択"):
+			found_part_action = true
+	if not found_part_action:
+		_fail("Actions menu has no part selection entry")
+		return
+	app.call("_on_more_action", 6)
+	await process_frame
+	if not chooser_popup.visible or chooser.item_lookup.size() != rig.parts.size():
+		_fail("Part selection popup does not show all model joints")
+		return
+	chooser.filter_box.text = "前右上肢"
+	chooser.call("_rebuild")
+	if not chooser.item_lookup.has("前右上肢"):
+		_fail("Part selection popup cannot search by part name")
+		return
+	chooser.item_lookup["前右上肢"].select(0)
+	await process_frame
+	if str(app.get("selected_part")) != "前右上肢":
+		_fail("Choosing a part did not change the active joint")
+		return
+	if chooser_popup.visible or part_picker.get_item_text(part_picker.selected) != "前右上肢":
+		_fail("Part popup did not close or synchronize the primary selector")
+		return
+	var timeline: MotionTimelineView = app.get("timeline_view")
+	var badge: Label = app.get("selection_badge")
+	if timeline.selected_part != "前右上肢" or not badge.text.contains("前右上肢"):
+		_fail("Part selection did not synchronize timeline and viewport badge")
+		return
+	print("MOTION CLARITY UI PASS: actions menu part picker, search, hierarchy, timeline sync, optional keys and help")
 	quit(0)
 
 func _fail(reason: String) -> void:
