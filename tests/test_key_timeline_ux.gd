@@ -40,10 +40,10 @@ func _verify() -> void:
 	if absf(float(app.get("camera_distance")) - camera_distance) > 0.005:
 		_fail("One-tap reset did not fit original model")
 		return
-	app.set("selected_part", "前左上肢")
+	app.set("selected_part", "胴体")
 	app.call("_refresh_part_picker")
 	await process_frame
-	var original_rotation: Array = engine.frames[1]["poses"]["前左上肢"]["rotation"].duplicate()
+	var original_rotation: Array = engine.frames[1]["poses"]["胴体"]["rotation"].duplicate()
 	var original_count: int = engine.frames.size()
 	var start: float = 0.7
 	var destination: float = 1.0
@@ -61,7 +61,7 @@ func _verify() -> void:
 	if engine.frames.size() != original_count:
 		_fail("Moving key added or removed frames")
 		return
-	if absf(float(engine.frames[1]["poses"]["前左上肢"]["rotation"][2]) - float(original_rotation[2])) > 0.0001:
+	if absf(float(engine.frames[1]["poses"]["胴体"]["rotation"][2]) - float(original_rotation[2])) > 0.0001:
 		_fail("Moving a key modified its animation pose")
 		return
 	app.call("_update_history_buttons")
