@@ -1233,6 +1233,19 @@ func _set_chain_prop(key: String, value: Variant) -> void:
 	_refresh_timeline_view()
 	_update_history_buttons()
 
+func _set_ground_follow(enabled: bool) -> void:
+	if selected_chain < 0 or selected_chain >= rig.chains.size():
+		return
+	motion.record_undo()
+	var chain: Dictionary = rig.chains[selected_chain]
+	chain["ground_follow"] = enabled
+	if enabled:
+		chain["enabled"] = true
+	motion.evaluate(motion.play_time)
+	_refresh_timeline_view()
+	_refresh_inspector()
+	_update_history_buttons()
+
 func _inspector_ik() -> void:
 	_add_text(inspector, "IKチェーンと目標点", true)
 	var row := _row(inspector)
@@ -1299,6 +1312,18 @@ func _inspector_ik() -> void:
 			pole[axis] = value
 			_set_chain_prop("pole", pole))
 	_number_field("IK強度", chain["weight"], 0.0, 1.0, 0.05, func(v: float): _set_chain_prop("weight", v))
+	_add_text(inspector, "地表追従IK（なぎ払い）", true)
+	_check("元のなぎ払い軌道に沿って地表をなぞる", bool(chain.get("ground_follow", false)),
+		func(on: bool): _set_ground_follow(on))
+	if bool(chain.get("ground_follow", false)):
+		_add_text(inspector, "元モーションの前後・左右の曲線を残し、足先メッシュの下面が床に接するようIKで高さを補正します。IKは自動的に有効になります。")
+		_check("下肢のメッシュもめり込み判定", bool(chain.get("ground_include_lower", true)),
+			func(on: bool): _set_chain_prop("ground_include_lower", on))
+		_number_field("地表の高さ（m）", float(chain.get("ground_height", 0.0)), -10.0, 10.0, 0.01,
+			func(v: float): _set_chain_prop("ground_height", v))
+		_number_field("接地余裕（m）", float(chain.get("ground_clearance", 0.005)), 0.0, 0.25, 0.005,
+			func(v: float): _set_chain_prop("ground_clearance", v))
+		_add_text(inspector, "青いIK適用バーでなぎ払いの接地区間を指定。地表追従中は同じ脚の「床に固定」より優先します。届かない姿勢は診断に表示されます。")
 	_add_text(inspector, "上の青いバー：両端をドラッグで時間変更／中央で区間移動（1フレーム単位）")
 	_number_field("開始 (秒)", chain["start"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("start", v))
 	_number_field("終了 (秒)", chain["finish"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("finish", v))
