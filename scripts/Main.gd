@@ -439,7 +439,7 @@ func _build_interface() -> void:
 	anim_col.add_child(animation_picker)
 	selectors.move_child(anim_col, 0)
 	editor_scroll = ScrollContainer.new()
-	editor_scroll.custom_minimum_size.y = 108
+	editor_scroll.custom_minimum_size.y = 130
 	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	editor_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	editor_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
