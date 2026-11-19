@@ -90,15 +90,39 @@ func _run() -> void:
 	if not key_scroll.visible:
 		_fail("Motion key list cannot be expanded")
 		return
+	# Fold the keyframe menu, leaving the compact scrubber and edit state intact.
+	var seek: HSlider = app.get("seek")
+	var timeline_toggle: Button = app.get("timeline_toggle")
+	if timeline_toggle == null or not timeline_toggle.visible:
+		_fail("Keyframe folding button is missing")
+		return
+	var engine: MotionEngine = app.get("motion")
+	var frames_before: String = JSON.stringify(engine.frames)
+	app.call("_toggle_timeline")
+	await process_frame
+	if timeline_view.visible or timeline_transport.visible or key_scroll.visible or not seek.visible:
+		_fail("Folded keyframe menu did not expose the compact scrubber")
+		return
+	if not timeline_toggle.text.contains("開く") or JSON.stringify(engine.frames) != frames_before:
+		_fail("Folding modified animation data or did not update the reopen label")
+		return
 	app.call("_change_mode", "IK")
 	await process_frame
-	if key_scroll.visible:
-		_fail("Expanded motion key list remained visible in IK")
+	if key_scroll.visible or timeline_toggle.visible:
+		_fail("Keyframe controls remained visible in IK")
 		return
 	app.call("_change_mode", "モーション")
 	await process_frame
-	if not key_scroll.visible:
-		_fail("Motion key list state was not restored")
+	if timeline_view.visible or not seek.visible:
+		_fail("Collapsed keyframe state was lost when changing modes")
+		return
+	app.call("_toggle_timeline")
+	await process_frame
+	if not timeline_view.visible or not timeline_transport.visible or not key_scroll.visible or seek.visible:
+		_fail("Reopening keyframes did not restore the previous expanded key list")
+		return
+	if not timeline_toggle.text.contains("閉じる") or JSON.stringify(engine.frames) != frames_before:
+		_fail("Restoring keyframes corrupted data or the open state")
 		return
 	app.call("_toggle_editor")
 	await process_frame
