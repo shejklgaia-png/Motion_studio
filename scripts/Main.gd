@@ -378,6 +378,7 @@ func _build_interface() -> void:
 		page_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		page_button.custom_minimum_size = Vector2(0, 48)
 		page_button.clip_text = true
+		page_button.toggle_mode = true
 		page_button.focus_mode = Control.FOCUS_NONE
 		primary_page_buttons[page_name] = page_button
 
@@ -400,6 +401,7 @@ func _build_interface() -> void:
 		mode_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mode_button.custom_minimum_size = Vector2(0, 44)
 		mode_button.clip_text = true
+		mode_button.toggle_mode = true
 		mode_button.focus_mode = Control.FOCUS_NONE
 		mode_buttons[name] = mode_button
 	page_hint = _add_text(editor, "")
