@@ -141,7 +141,11 @@ func add_chain(label: String, root_name: String, mid_name: String, end_name: Str
 	chains.append({"name": label, "root": root_name, "mid": mid_name, "end": end_name,
 		"tip": [tip.x, tip.y, tip.z], "target": target,
 		"enabled": false, "weight": 1.0, "method": "CCD",
-		"start": 0.0, "finish": 3.0, "pole": [0.0, 0.0, 1.0]})
+		"start": 0.0, "finish": 3.0, "pole": [0.0, 0.0, 1.0],
+		# Optional sweep mode follows the authored X/Z path while lifting/lowering
+		# the lower-leg + foot meshes onto a flat floor.
+		"ground_follow": false, "ground_height": 0.0,
+		"ground_clearance": 0.005, "ground_include_lower": true})
 
 func store_rest() -> void:
 	rest.clear()
