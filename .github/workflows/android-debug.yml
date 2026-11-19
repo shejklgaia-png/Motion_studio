@@ -97,6 +97,7 @@ jobs:
       - name: Test touch timeline drag and editing usability
         run: |
           ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_key_timeline_ux.gd
+          ./Godot_v4.6-stable_linux.x86_64 --headless --path . --script res://tests/test_ik_timeline_range.gd
 
       - name: Test contact anchors and deterministic IK baking
         run: |
