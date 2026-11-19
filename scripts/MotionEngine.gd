@@ -309,7 +309,7 @@ func evaluate(at_time: float) -> void:
 	for _iteration in range(passes):
 		for index in active_indices:
 			var item: Dictionary = rig.chains[index]
-			if bool(item.get("walk_enabled", false)):
+			if item.get("walk_enabled", false) == true:
 				_solve_chain(item, _sample_walk_goal(item, play_time))
 				continue
 			if _avoidance_enabled(item):
@@ -937,7 +937,7 @@ func snapshot() -> Dictionary:
 		"bake_source": bake_source.duplicate(true), "bake_report": bake_report.duplicate(true)}
 
 func restore(data: Dictionary) -> void:
-	sample_walk = bool(data.get("sample_walk", false))
+	sample_walk = data.get("sample_walk", false) == true
 	duration = float(data.get("duration", 3.0))
 	fps = int(data.get("fps", 60))
 	frames = data.get("frames", []).duplicate(true)
