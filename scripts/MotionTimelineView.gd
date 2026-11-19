@@ -37,6 +37,7 @@ var ik_visible: bool = false
 var ik_index: int = -1
 var ik_name: String = ""
 var ik_enabled: bool = false
+var collision_avoidance_lane: bool = false
 var ik_start: float = 0.0
 var ik_finish: float = 0.0
 var ik_preview_start: float = 0.0
@@ -92,12 +93,14 @@ func set_ik_track(chains: Array, selected_index: int, show_keys: bool = true) ->
 	ik_index = clampi(selected_index, 0, chains.size() - 1) if not chains.is_empty() else -1
 	ik_name = "IK未設定"
 	ik_enabled = false
+	collision_avoidance_lane = false
 	ik_start = 0.0
 	ik_finish = clip_duration
 	if ik_index >= 0:
 		var chain: Dictionary = chains[ik_index]
 		ik_name = str(chain.get("name", "IK"))
 		ik_enabled = bool(chain.get("enabled", false))
+		collision_avoidance_lane = bool(chain.get("collision_avoid", chain.get("ground_follow", false)))
 		ik_start = clampf(float(chain.get("start", 0.0)), 0.0, clip_duration)
 		ik_finish = clampf(float(chain.get("finish", clip_duration)), ik_start, clip_duration)
 	if ik_drag_mode == "":
@@ -172,7 +175,7 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2(LABEL_WIDTH, y), Vector2(_timeline_width(), IK_ROW_H)), Color("182b40"))
 		draw_rect(Rect2(Vector2(0, y), Vector2(LABEL_WIDTH, IK_ROW_H)), Color("273a50"))
 		draw_line(Vector2(0, y), Vector2(size.x, y), DIVIDER, 1.0)
-		draw_string(font, Vector2(9, y + 18), "IK 適用", HORIZONTAL_ALIGNMENT_LEFT, LABEL_WIDTH - 12, 12, Color("9acdf5"))
+		draw_string(font, Vector2(9, y + 18), "接触回避" if collision_avoidance_lane else "IK 適用", HORIZONTAL_ALIGNMENT_LEFT, LABEL_WIDTH - 12, 12, Color("9acdf5"))
 		if ik_index >= 0:
 			var label: String = ik_name
 			if label.length() > 9:
