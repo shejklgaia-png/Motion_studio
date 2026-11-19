@@ -41,7 +41,8 @@ func _verify_blockbench_workspace() -> void:
 	if picker == null:
 		_fail("Part selector was removed")
 		return
-	var chosen := "前左上肢"
+	# Torso uses explicit FK rotation keys; legs now use animated IK targets.
+	var chosen := "胴体"
 	if not rig.parts.has(chosen):
 		_fail("Sample rig lost an animated joint")
 		return
