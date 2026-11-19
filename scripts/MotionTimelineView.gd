@@ -235,16 +235,56 @@ func _jump_to_position(position: Vector2) -> void:
 				break
 	seek_requested.emit(requested)
 
+# 22px handle hit boxes make edge retiming usable with fingers.
+# Whole-bar dragging preserves the interval duration and clamps to clip bounds.
 func _press(point: Vector2) -> void:
 	scrubbing = true
 	press_position = point
-	key_drag_start = _find_key_under_touch(point)
-	key_drag_preview = key_drag_start
+	key_drag_start = -1.0
+	key_drag_preview = -1.0
 	dragging_key = false
+	ik_drag_mode = ""
+	if _is_ik_row(point) and ik_index >= 0 and point.x >= LABEL_WIDTH:
+		var x0: float = _time_to_x(ik_start)
+		var x1: float = _time_to_x(ik_finish)
+		var edge_distance: float = 22.0
+		var d0: float = absf(point.x - x0)
+		var d1: float = absf(point.x - x1)
+		if d0 <= edge_distance and d0 <= d1:
+			ik_drag_mode = "start"
+		elif d1 <= edge_distance:
+			ik_drag_mode = "finish"
+		elif point.x >= x0 and point.x <= x1:
+			ik_drag_mode = "move"
+		ik_press_time = _x_to_time(point.x)
+		ik_original_start = ik_start
+		ik_original_finish = ik_finish
+		ik_preview_start = ik_start
+		ik_preview_finish = ik_finish
+	else:
+		key_drag_start = _find_key_under_touch(point)
+		key_drag_preview = key_drag_start
 	_jump_to_position(point)
 
 func _move(point: Vector2) -> void:
 	if not scrubbing:
+		return
+	if ik_drag_mode != "":
+		var t: float = _snap_time(_x_to_time(point.x))
+		var frame_step: float = 1.0 / float(timeline_fps)
+		var span: float = ik_original_finish - ik_original_start
+		match ik_drag_mode:
+			"start":
+				ik_preview_start = clampf(t, 0.0, maxf(0.0, ik_original_finish - frame_step))
+				ik_preview_finish = ik_original_finish
+			"finish":
+				ik_preview_start = ik_original_start
+				ik_preview_finish = clampf(t, minf(clip_duration, ik_original_start + frame_step), clip_duration)
+			"move":
+				var shift: float = t - _snap_time(ik_press_time)
+				ik_preview_start = clampf(_snap_time(ik_original_start + shift), 0.0, maxf(0.0, clip_duration - span))
+				ik_preview_finish = ik_preview_start + span
+		queue_redraw()
 		return
 	if key_drag_start >= 0.0 and absf(point.x - press_position.x) >= 12.0:
 		dragging_key = true
@@ -259,7 +299,12 @@ func _release() -> void:
 	if not scrubbing:
 		return
 	scrubbing = false
-	if dragging_key and key_drag_start >= 0.0 and absf(key_drag_preview - key_drag_start) > 0.0005:
+	if ik_drag_mode != "":
+		var changed: bool = absf(ik_preview_start - ik_original_start) > 0.0005 or absf(ik_preview_finish - ik_original_finish) > 0.0005
+		if changed:
+			ik_range_requested.emit(ik_index, ik_preview_start, ik_preview_finish)
+		ik_drag_mode = ""
+	elif dragging_key and key_drag_start >= 0.0 and absf(key_drag_preview - key_drag_start) > 0.0005:
 		key_move_requested.emit(key_drag_start, key_drag_preview)
 	dragging_key = false
 	key_drag_start = -1.0
