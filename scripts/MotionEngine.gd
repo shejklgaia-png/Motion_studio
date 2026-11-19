@@ -215,44 +215,45 @@ func evaluate(at_time: float) -> void:
 		var chain: Dictionary = rig.chains[i]
 		if chain.get("enabled", false) and play_time >= float(chain.get("start", 0.0)) and play_time <= float(chain.get("finish", duration)):
 			active_indices.append(i)
-	# Capture the original FK trajectory before solving any chains. A sweeping
-	# foot must retain its authored horizontal arc, not follow a linear slide.
-	var ground_goals: Dictionary = {}
+	# The original sampled FK animation is the reference. Only frames with
+	# actual geometry penetration get an IK adjustment; no surface snapping.
+	var avoidance_goals: Dictionary = {}
 	for index in active_indices:
 		var chain: Dictionary = rig.chains[index]
-		if not bool(chain.get("ground_follow", false)):
+		if not _avoidance_enabled(chain):
 			continue
 		var end: Node3D = rig.parts.get(str(chain.get("end", "")))
 		if end == null:
 			continue
-		var fk_tip: Vector3 = end.to_global(MotionRig.from_array(chain["tip"]))
-		var surface_y: float = _ground_surface_min_y(chain)
-		var floor_y: float = float(chain.get("ground_height", 0.0)) + maxf(0.0, float(chain.get("ground_clearance", 0.005)))
-		fk_tip.y += floor_y - surface_y
-		ground_goals[index] = fk_tip
+		var offset: Vector3 = _collision_escape(chain)
+		if offset.length_squared() <= 0.00000001:
+			continue
+		avoidance_goals[index] = end.to_global(MotionRig.from_array(chain["tip"])) + offset
 	var needs_cooperation: bool = _has_shared_ik_joints(active_indices)
 	var passes: int = 3 if needs_cooperation else 1
 	for _iteration in range(passes):
 		for index in active_indices:
 			var item: Dictionary = rig.chains[index]
-			if ground_goals.has(index):
-				var sweep_goal: Vector3 = ground_goals[index]
-				_solve_chain(item, sweep_goal)
-				# Rotating the knee also rotates the foot mesh. Recheck its actual
-				# lower bounds and correct the vertical goal without changing X/Z.
-				var floor_y: float = float(item.get("ground_height", 0.0)) + maxf(0.0, float(item.get("ground_clearance", 0.005)))
-				for _correction in range(4):
-					var vertical_error: float = floor_y - _ground_surface_min_y(item)
-					if absf(vertical_error) < 0.001:
+			if _avoidance_enabled(item):
+				if not avoidance_goals.has(index):
+					continue
+				var goal: Vector3 = avoidance_goals[index]
+				_solve_chain(item, goal)
+				# Rotation can change the effective geometry. Iterate using
+				# the post-IK penetration while keeping authored travel intact.
+				for _correction in range(7):
+					var remaining: Vector3 = _collision_escape(item)
+					if remaining.length_squared() < 0.000001:
 						break
-					sweep_goal.y += vertical_error
-					_solve_chain(item, sweep_goal)
+					goal += remaining
+					_solve_chain(item, goal)
+				avoidance_goals[index] = goal
 				continue
 			var base_goal: Vector3 = item["target"].global_position
-			var goal: Dictionary = get_contact_goal(index, play_time)
-			if bool(goal.get("active", false)):
-				var influence: float = clampf(float(goal.get("weight", 1.0)), 0.0, 1.0)
-				base_goal = base_goal.lerp(goal["position"], influence)
+			var contact: Dictionary = get_contact_goal(index, play_time)
+			if bool(contact.get("active", false)):
+				var influence: float = clampf(float(contact.get("weight", 1.0)), 0.0, 1.0)
+				base_goal = base_goal.lerp(contact["position"], influence)
 			_solve_chain(item, base_goal)
 	warnings = diagnose()
 
@@ -381,26 +382,51 @@ func _has_shared_ik_joints(indices: Array[int]) -> bool:
 				return true
 	return false
 
-# Lowest possible vertex height of the animated part geometry. AABB corners
-# are intentionally conservative, including rotated/Blockbench imported meshes,
-# so no part of the rendered foot is allowed below the ground.
+# Contact avoidance uses conservative transformed mesh bounding corners.
+# Each mesh is checked separately to avoid treating empty spaces between
+# separate pieces of geometry as solid. This is an offline animation tool:
+# no runtime collision queries or discontinuous physics state are needed.
+func _avoidance_enabled(chain: Dictionary) -> bool:
+	return bool(chain.get("collision_avoid", chain.get("ground_follow", false)))
+
+func _avoidance_meshes(chain: Dictionary) -> Array[MeshInstance3D]:
+	var results: Array[MeshInstance3D] = []
+	for field in ["mid", "end"]:
+		if field == "mid" and not bool(chain.get("collision_include_mid", chain.get("ground_include_lower", true))):
+			continue
+		var part: Node3D = rig.parts.get(str(chain.get(field, "")))
+		if part == null:
+			continue
+		var pending: Array[Node] = [part]
+		while not pending.is_empty():
+			var current: Node = pending.pop_back()
+			if current is MeshInstance3D and (current as MeshInstance3D).mesh != null:
+				results.append(current as MeshInstance3D)
+			for child in current.get_children():
+				if child != part and child.has_meta("part_name"):
+					continue
+				pending.append(child)
+	return results
+
+func _mesh_world_corners(mesh: MeshInstance3D) -> Array[Vector3]:
+	var world: Array[Vector3] = []
+	var box: AABB = mesh.mesh.get_aabb()
+	for x in [0.0, 1.0]:
+		for y in [0.0, 1.0]:
+			for z in [0.0, 1.0]:
+				var local: Vector3 = box.position + box.size * Vector3(x, y, z)
+				world.append(mesh.global_transform * local)
+	return world
+
 func _part_mesh_min_y(part: Node3D) -> float:
 	var lowest: float = INF
 	var pending: Array[Node] = [part]
 	while not pending.is_empty():
 		var current: Node = pending.pop_back()
-		if current is MeshInstance3D:
-			var visual: MeshInstance3D = current as MeshInstance3D
-			if visual.mesh != null:
-				var box: AABB = visual.mesh.get_aabb()
-				for x in [0.0, 1.0]:
-					for y in [0.0, 1.0]:
-						for z in [0.0, 1.0]:
-							var corner: Vector3 = box.position + box.size * Vector3(x, y, z)
-							lowest = minf(lowest, (visual.global_transform * corner).y)
+		if current is MeshInstance3D and (current as MeshInstance3D).mesh != null:
+			for corner in _mesh_world_corners(current as MeshInstance3D):
+				lowest = minf(lowest, corner.y)
 		for child in current.get_children():
-			# Other registered joints have their own geometry; never descend
-			# through the entire skeleton or include unrelated leg sections.
 			if child != part and child.has_meta("part_name"):
 				continue
 			pending.append(child)
@@ -408,18 +434,90 @@ func _part_mesh_min_y(part: Node3D) -> float:
 
 func _ground_surface_min_y(chain: Dictionary) -> float:
 	var lowest: float = INF
-	for field in ["mid", "end"]:
-		if field == "mid" and not bool(chain.get("ground_include_lower", true)):
-			continue
-		var part: Node3D = rig.parts.get(str(chain.get(field, "")))
-		if part != null:
-			lowest = minf(lowest, _part_mesh_min_y(part))
+	for mesh in _avoidance_meshes(chain):
+		for corner in _mesh_world_corners(mesh):
+			lowest = minf(lowest, corner.y)
 	if lowest == INF:
 		var end: Node3D = rig.parts.get(str(chain.get("end", "")))
 		if end != null:
 			return end.to_global(MotionRig.from_array(chain["tip"])).y
 		return 0.0
 	return lowest
+
+# Return the smallest world-space translation that separates a mesh proxy
+# from a rotated/scaled test obstacle (box, sphere or capsule).
+func _mesh_obstacle_escape(mesh: MeshInstance3D, obstacle: Dictionary, margin: float) -> Vector3:
+	var body: Node3D = obstacle.get("node")
+	if body == null or not is_instance_valid(body):
+		return Vector3.ZERO
+	var minimum: Vector3 = Vector3(INF, INF, INF)
+	var maximum: Vector3 = Vector3(-INF, -INF, -INF)
+	for corner in _mesh_world_corners(mesh):
+		var local: Vector3 = body.to_local(corner)
+		minimum = minimum.min(local)
+		maximum = maximum.max(local)
+	var kind: String = str(obstacle.get("kind", "箱"))
+	var nearest: Vector3 = Vector3.ZERO
+	if kind == "箱":
+		var lo: Vector3 = Vector3(-0.45, -0.45, -0.45) - Vector3.ONE * margin
+		var hi: Vector3 = Vector3(0.45, 0.45, 0.45) + Vector3.ONE * margin
+		if minimum.x >= hi.x or maximum.x <= lo.x or minimum.y >= hi.y or maximum.y <= lo.y or minimum.z >= hi.z or maximum.z <= lo.z:
+			return Vector3.ZERO
+		nearest = _smallest_world_escape(body, minimum, maximum, lo, hi)
+	elif kind == "球" or kind == "カプセル":
+		var radius: float = (0.45 if kind == "球" else 0.37) + margin
+		var half_axis: float = 0.0 if kind == "球" else 0.28
+		var middle_y: float = 0.5 * (minimum.y + maximum.y)
+		var spine: Vector3 = Vector3(0, clampf(middle_y, -half_axis, half_axis), 0)
+		var nearest_point: Vector3 = spine.clamp(minimum, maximum)
+		var delta: Vector3 = nearest_point - spine
+		if delta.length_squared() >= radius * radius:
+			return Vector3.ZERO
+		if delta.length_squared() > 0.000001:
+			nearest = delta.normalized() * (radius - delta.length())
+		else:
+			var lo: Vector3 = Vector3(-radius, -radius - half_axis, -radius)
+			var hi: Vector3 = Vector3(radius, radius + half_axis, radius)
+			nearest = _smallest_world_escape(body, minimum, maximum, lo, hi)
+	else:
+		return Vector3.ZERO
+	return body.global_transform.basis * nearest
+
+func _smallest_world_escape(body: Node3D, minimum: Vector3, maximum: Vector3, lo: Vector3, hi: Vector3) -> Vector3:
+	var best: Vector3 = Vector3.ZERO
+	var best_distance: float = INF
+	for axis in range(3):
+		for push in [lo[axis] - maximum[axis], hi[axis] - minimum[axis]]:
+			var candidate: Vector3 = Vector3.ZERO
+			candidate[axis] = push
+			var world: Vector3 = body.global_transform.basis * candidate
+			if world.length_squared() < best_distance:
+				best_distance = world.length_squared()
+				best = candidate
+	return best
+
+# Return only the correction needed to escape an actual intersection.
+# Floor contact is one-sided. Object contact can resolve in X/Y/Z.
+func _collision_escape(chain: Dictionary) -> Vector3:
+	var margin: float = maxf(0.0, float(chain.get("collision_margin", chain.get("ground_clearance", 0.005))))
+	var best: Vector3 = Vector3.ZERO
+	if bool(chain.get("collision_floor", true)):
+		var ground_y: float = float(chain.get("collision_height", chain.get("ground_height", 0.0)))
+		var penetration: float = ground_y + margin - _ground_surface_min_y(chain)
+		if penetration > 0.0001:
+			best = Vector3.UP * penetration
+	if bool(chain.get("collision_objects", false)):
+		var index: int = int(chain.get("collision_object_index", -1))
+		if index >= rig.test_objects.size():
+			return best
+		for i in range(rig.test_objects.size()):
+			if index >= 0 and index != i:
+				continue
+			for mesh in _avoidance_meshes(chain):
+				var displacement: Vector3 = _mesh_obstacle_escape(mesh, rig.test_objects[i], margin)
+				if displacement.length_squared() > best.length_squared():
+					best = displacement
+	return best
 
 # Contact modes: floor (world y=0), world (fixed 3D point), obstacle (relative
 # to a selected test object). Slip is analytic and time-based, so scrubbing
@@ -614,11 +712,12 @@ func diagnose() -> Array:
 		var end: Node3D = rig.parts.get(chain["end"])
 		if end == null:
 			continue
-		if bool(chain.get("ground_follow", false)):
-			var lowest: float = _ground_surface_min_y(chain)
-			var floor_y: float = float(chain.get("ground_height", 0.0)) + maxf(0.0, float(chain.get("ground_clearance", 0.005)))
-			if absf(lowest - floor_y) > 0.025:
-				report.append("%s：地表追従の接地誤差 %.3fm（IKの届く範囲・関節制約を確認）" % [str(chain["name"]), absf(lowest - floor_y)])
+		if _avoidance_enabled(chain):
+			var residual: Vector3 = _collision_escape(chain)
+			if residual.length_squared() > 0.0004:
+				report.append("%s：接触回避の残差 %.3fm（関節の可動域・対象物体の位置を確認）" % [str(chain["name"]), residual.length()])
+			if bool(chain.get("collision_objects", false)) and int(chain.get("collision_object_index", -1)) >= rig.test_objects.size():
+				report.append("%s：接触回避の対象物体が見つかりません" % str(chain["name"]))
 			continue
 		var desired: Vector3 = chain["target"].global_position
 		var contact: Dictionary = get_contact_goal(index, play_time)
@@ -780,9 +879,19 @@ func restore(data: Dictionary) -> void:
 		if rig.chains.is_empty():
 			continue
 		var latest: Dictionary = rig.chains[-1]
-		for key in ["enabled", "method", "weight", "start", "finish", "pole", "ground_follow",
-			"ground_height", "ground_clearance", "ground_include_lower"]:
+		for key in ["enabled", "method", "weight", "start", "finish", "pole",
+			"collision_avoid", "collision_floor", "collision_objects", "collision_object_index",
+			"collision_height", "collision_margin", "collision_include_mid"]:
 			latest[key] = chain.get(key, latest.get(key))
+		# Old projects with ground-follow settings transparently become
+		# floor-only collision avoidance; no user settings are discarded.
+		if not chain.has("collision_avoid") and bool(chain.get("ground_follow", false)):
+			latest["collision_avoid"] = true
+			latest["collision_floor"] = true
+			latest["collision_objects"] = false
+			latest["collision_height"] = float(chain.get("ground_height", 0.0))
+			latest["collision_margin"] = float(chain.get("ground_clearance", 0.005))
+			latest["collision_include_mid"] = bool(chain.get("ground_include_lower", true))
 	evaluate(float(data.get("time", 0.0)))
 
 func save_project(path: String) -> String:

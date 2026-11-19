@@ -1,6 +1,6 @@
 extends SceneTree
 
-# Ground tracing must preserve the original curved FK sweep instead of
+# Collision avoidance must preserve the original curved FK sweep instead of
 # replacing it with a straight, constant-speed horizontal slide.
 func _initialize() -> void:
 	call_deferred("_verify")
@@ -42,10 +42,12 @@ func _verify() -> void:
 	chain["weight"] = 1.0
 	chain["start"] = 0.25
 	chain["finish"] = 1.35
-	chain["ground_follow"] = true
-	chain["ground_height"] = 0.0
-	chain["ground_clearance"] = 0.01
-	chain["ground_include_lower"] = true
+	chain["collision_avoid"] = true
+	chain["collision_floor"] = true
+	chain["collision_objects"] = false
+	chain["collision_height"] = 0.0
+	chain["collision_margin"] = 0.01
+	chain["collision_include_mid"] = true
 	var end: Node3D = rig.parts[chain["end"]]
 	var tip: Vector3 = MotionRig.from_array(chain["tip"])
 	var any_penetration: bool = false
@@ -63,11 +65,11 @@ func _verify() -> void:
 		engine.evaluate(t)
 		var actual: Vector3 = end.to_global(tip)
 		var corrected_floor: float = engine._ground_surface_min_y(chain)
-		if absf(corrected_floor - 0.01) > 0.045:
-			_fail("Ground tracing missed the surface at %.2fs: %.4f" % [t, corrected_floor])
+		if corrected_floor < -0.045:
+			_fail("Collision avoidance missed the surface at %.2fs: %.4f" % [t, corrected_floor])
 			return
 		if absf(actual.x - authored.x) > 0.05 or absf(actual.z - authored.z) > 0.05:
-			_fail("Ground tracing altered original FK sweep path: " + str([t, authored, actual]))
+			_fail("Collision avoidance altered original FK sweep path: " + str([t, authored, actual]))
 			return
 		seen_x.append(actual.x)
 	if not any_penetration:
@@ -75,7 +77,7 @@ func _verify() -> void:
 		return
 	var horizontal_span: float = seen_x.max() - seen_x.min()
 	if horizontal_span < 0.25:
-		_fail("Ground tracing removed the lateral sweep arc")
+		_fail("Collision avoidance removed the lateral sweep arc")
 		return
 	# Outside the interval, the original FK pose must remain untouched.
 	chain["enabled"] = false
@@ -88,27 +90,27 @@ func _verify() -> void:
 		return
 	var stored: Dictionary = engine.snapshot()
 	engine.restore(stored)
-	if not bool(rig.chains[0].get("ground_follow", false)):
-		_fail("Restored project lost ground tracing")
+	if not bool(rig.chains[0].get("collision_avoid", false)):
+		_fail("Restored project lost collision avoidance")
 		return
-	if absf(float(rig.chains[0].get("ground_clearance", 0.0)) - 0.01) > 0.00001:
+	if absf(float(rig.chains[0].get("collision_margin", 0.0)) - 0.01) > 0.00001:
 		_fail("Restored project lost sweep clearance")
 		return
 	var bake: Dictionary = engine.bake_ik_fk(30)
 	if not bool(bake.get("ok", false)):
-		_fail("Could not bake ground trace to FK animation")
+		_fail("Could not bake collision avoidance to FK animation")
 		return
 	if bool(rig.chains[0]["enabled"]):
-		_fail("IK remained active after baking ground trace")
+		_fail("IK remained active after baking collision avoidance")
 		return
 	engine.evaluate(0.8)
-	if absf(engine._ground_surface_min_y(rig.chains[0]) - 0.01) > 0.055:
-		_fail("Baked ground tracing changed the contact geometry")
+	if engine._ground_surface_min_y(rig.chains[0]) < -0.055:
+		_fail("Baked collision avoidance changed the contact geometry")
 		return
-	if not engine.restore_bake_source() or not bool(rig.chains[0].get("ground_follow", false)):
+	if not engine.restore_bake_source() or not bool(rig.chains[0].get("collision_avoid", false)):
 		_fail("Restoring pre-bake source lost ground-follow setup")
 		return
-	print("GROUND SWEEP IK PASS: underside, authored arc, time range, save/restore, 30fps bake")
+	print("CONTACT AVOIDANCE IK PASS: underside, authored arc, time range, save/restore, 30fps bake")
 	quit(0)
 
 func _fail(message: String) -> void:
