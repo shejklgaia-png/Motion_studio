@@ -325,6 +325,7 @@ func _build_interface() -> void:
 	timeline_view = MotionTimelineView.new()
 	timeline_view.seek_requested.connect(_on_user_seek)
 	timeline_view.key_move_requested.connect(_on_key_move_requested)
+	timeline_view.ik_range_requested.connect(_on_ik_range_requested)
 	timeline.add_child(timeline_view)
 	timeline_transport = _row(timeline)
 	var transport := timeline_transport
@@ -547,6 +548,25 @@ func _on_key_move_requested(from_time: float, to_time: float) -> void:
 		_note("キー移動不可：先頭・末尾、または既存キーと重複しています")
 	_update_history_buttons()
 
+# A single undo snapshot covers a whole touch gesture, not every drag frame.
+func _on_ik_range_requested(chain_index: int, start_time: float, finish_time: float) -> void:
+	if chain_index < 0 or chain_index >= rig.chains.size():
+		return
+	var start_value: float = clampf(start_time, 0.0, motion.duration)
+	var finish_value: float = clampf(finish_time, start_value, motion.duration)
+	var chain: Dictionary = rig.chains[chain_index]
+	if absf(float(chain.get("start", 0.0)) - start_value) < 0.0005 and absf(float(chain.get("finish", 0.0)) - finish_value) < 0.0005:
+		return
+	motion.record_undo()
+	selected_chain = chain_index
+	chain["start"] = start_value
+	chain["finish"] = finish_value
+	motion.evaluate(motion.play_time)
+	_refresh_timeline_view()
+	_refresh_inspector()
+	_update_history_buttons()
+	_note("IK適用：%.2f〜%.2f秒（↶で元に戻せます）" % [start_value, finish_value])
+
 func _choose_transform(kind: String) -> void:
 	active_transform = kind
 	pan_view = false
@@ -584,6 +604,7 @@ func _change_mode(new_mode: String) -> void:
 	editor_body.show()
 	editor_toggle.text = "閉じる ▲"
 	_apply_mode_layout()
+	_refresh_timeline_view()
 	for name in ["階層", "モーション", "IK"]:
 		_style_button(mode_buttons[name], name == mode)
 	_style_button(advanced_menu, mode in ADVANCED_MODES)
@@ -642,18 +663,18 @@ func _apply_mode_layout() -> void:
 	if preview_frame == null or editor_panel == null or timeline_panel == null or editor_body == null:
 		return
 	# Keep the 3D view usable, while letting the mode-specific inspector fill the rest.
-	# Only animation editing needs the large keyframe track and transport controls.
+	# Motion mode displays the original FK diamonds plus the selected IK lane.
+	# IK mode displays only the IK lane, keeping the portrait 3D preview usable.
 	var timeline_full: bool = mode == "モーション"
 	var time_scrub: bool = mode in ["モーション", "IK", "接触", "診断", "ベイク"]
 	timeline_panel.get_parent().visible = time_scrub
-	# In motion mode, folding the keyframe menu retains a compact time scrubber.
-	# The transport, diamond track and key list are hidden without losing any edits.
+	var show_timeline: bool = mode in ["モーション", "IK"] and timeline_expanded
 	var show_keyframes: bool = timeline_full and timeline_expanded
-	timeline_title.text = "キーフレーム" if timeline_full else "動きの時間"
-	timeline_toggle.visible = timeline_full
+	timeline_title.text = "キーフレーム・IK" if timeline_full else ("IK適用時間" if mode == "IK" else "動きの時間")
+	timeline_toggle.visible = mode in ["モーション", "IK"]
 	timeline_toggle.text = "閉じる ▲" if timeline_expanded else "開く ▼"
-	seek.visible = not show_keyframes
-	timeline_view.visible = show_keyframes
+	seek.visible = not show_timeline
+	timeline_view.visible = show_timeline
 	timeline_transport.visible = show_keyframes
 	key_list_toggle.visible = show_keyframes
 	key_scroll.visible = show_keyframes and key_list_expanded
@@ -684,7 +705,7 @@ func _refresh_action_hint() -> void:
 	var descriptions: Dictionary = {
 		"階層": "部位をタップして選択 →「動き編集」で回転を変更",
 		"モーション": "黄色い◆で時間選択／ドラッグでキー移動 → 関節を回転",
-		"IK": "足先の目標点を選び、ドラッグして位置を設定",
+		"IK": "青いTLバーの端で適用時間、中央で区間を移動。足先は3Dハンドルで調整",
 		"制約": "関節を選び、動かせる角度や範囲を設定",
 		"接触": "足先の床固定・滑走・物体追従を設定",
 		"診断": "エラーと接地状態を確認",
@@ -954,6 +975,7 @@ func _update_selection_badge() -> void:
 func _refresh_timeline_view() -> void:
 	if timeline_view != null and motion != null:
 		timeline_view.set_timeline(motion.frames, selected_part, motion.duration, motion.play_time, motion.fps)
+		timeline_view.set_ik_track(rig.chains, selected_chain, mode == "モーション")
 
 func _on_outliner_selected(name: String) -> void:
 	selected_part = name
@@ -1202,8 +1224,14 @@ func _set_chain_prop(key: String, value: Variant) -> void:
 	if selected_chain < 0 or selected_chain >= rig.chains.size():
 		return
 	motion.record_undo()
+	if key == "start":
+		value = clampf(float(value), 0.0, float(rig.chains[selected_chain]["finish"]))
+	elif key == "finish":
+		value = clampf(float(value), float(rig.chains[selected_chain]["start"]), motion.duration)
 	rig.chains[selected_chain][key] = value
 	motion.evaluate(motion.play_time)
+	_refresh_timeline_view()
+	_update_history_buttons()
 
 func _inspector_ik() -> void:
 	_add_text(inspector, "IKチェーンと目標点", true)
@@ -1221,6 +1249,7 @@ func _inspector_ik() -> void:
 	chain_select.item_selected.connect(func(i: int):
 		selected_chain = i
 		_refresh_inspector()
+		_refresh_timeline_view()
 		_update_gizmo())
 	row.add_child(chain_select)
 	_make_button("IKを追加", _add_ik_chain, row)
@@ -1270,8 +1299,9 @@ func _inspector_ik() -> void:
 			pole[axis] = value
 			_set_chain_prop("pole", pole))
 	_number_field("IK強度", chain["weight"], 0.0, 1.0, 0.05, func(v: float): _set_chain_prop("weight", v))
-	_number_field("開始 (秒)", chain["start"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("start", v))
-	_number_field("終了 (秒)", chain["finish"], 0.0, 60.0, 0.05, func(v: float): _set_chain_prop("finish", v))
+	_add_text(inspector, "上の青いバー：両端をドラッグで時間変更／中央で区間移動（1フレーム単位）")
+	_number_field("開始 (秒)", chain["start"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("start", v))
+	_number_field("終了 (秒)", chain["finish"], 0.0, motion.duration, 0.05, func(v: float): _set_chain_prop("finish", v))
 	_add_text(inspector, "目標の赤・緑・青の矢印を指でドラッグすると、X・Y・Z軸を個別に動かせます。")
 	var lock_button := _make_button("足先固定・滑走の設定へ", func(): _change_mode("接触"), inspector)
 	_style_button(lock_button, false, true)
@@ -1292,6 +1322,7 @@ func _add_ik_chain() -> void:
 	rig.add_chain("新規IK" + str(rig.chains.size() + 1), parent_name, middle, tip_name,
 		Vector3.ZERO, tip_node.global_position)
 	selected_chain = rig.chains.size() - 1
+	_refresh_timeline_view()
 	_refresh_inspector()
 
 func _set_limit(label: String, field: String, axis: int, value: float) -> void:

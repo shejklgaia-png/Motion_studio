@@ -37,7 +37,7 @@ func _run() -> void:
 	var expected := {
 		"階層": [false, false, true, "パーツ検索"],
 		"モーション": [true, true, true, "＋キー"],
-		"IK": [true, false, false, "IKを追加"],
+		"IK": [true, true, false, "IKを追加"],
 		"制約": [false, false, false, "パーツ検索"],
 		"接触": [true, false, false, "IK設定"],
 		"診断": [true, false, false, "もう一度診断"],
@@ -54,7 +54,7 @@ func _run() -> void:
 		if timeline_panel.get_parent().visible != bool(configuration[0]):
 			_fail("Wrong timeline panel for mode " + name)
 			return
-		if timeline_view.visible != bool(configuration[1]) or timeline_transport.visible != bool(configuration[1]):
+		if timeline_view.visible != bool(configuration[1]) or timeline_transport.visible != (name == "モーション"):
 			_fail("Full animation controls leaked into mode " + name)
 			return
 		if tool_buttons["回転"].visible != bool(configuration[2]) or tool_buttons["移動"].visible != bool(configuration[2]):
@@ -108,8 +108,8 @@ func _run() -> void:
 		return
 	app.call("_change_mode", "IK")
 	await process_frame
-	if key_scroll.visible or timeline_toggle.visible:
-		_fail("Keyframe controls remained visible in IK")
+	if key_scroll.visible or not timeline_toggle.visible or timeline_view.visible:
+		_fail("Collapsed IK timeline did not preserve the compact scrubber")
 		return
 	app.call("_change_mode", "モーション")
 	await process_frame
