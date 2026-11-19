@@ -22,7 +22,6 @@ func _run() -> void:
 	var advanced: MenuButton = app.get("advanced_menu")
 	var key_scroll: ScrollContainer = app.get("key_scroll")
 	var key_list_toggle: Button = app.get("key_list_toggle")
-	var hint: Label = app.get("action_hint")
 	var editor_title: Label = app.get("editor_title")
 	if selector_bar == null or part_picker == null or animation_picker == null:
 		_fail("Always-visible part and animation selectors are missing")
@@ -55,9 +54,10 @@ func _run() -> void:
 	if key_scroll.visible:
 		_fail("Key list cannot be hidden")
 		return
-	if hint == null or not hint.text.contains("ファイル"):
-		_fail("Initial workflow hint is missing")
-		return
+	for child in app.get_children():
+		if child is AcceptDialog:
+			_fail("Tutorial popup must not be created on first launch")
+			return
 	app.call("_toggle_editor")
 	await process_frame
 	if editor_body.visible == true or not selector_bar.visible:
@@ -121,7 +121,7 @@ func _run() -> void:
 	if timeline.selected_part != "前右上肢" or not badge.text.contains("前右上肢"):
 		_fail("Part selection did not synchronize timeline and viewport badge")
 		return
-	print("MOTION CLARITY UI PASS: actions menu part picker, search, hierarchy, timeline sync, optional keys and help")
+	print("MOTION CLARITY UI PASS: actions menu part picker, search, hierarchy, timeline sync, optional keys without tutorial")
 	quit(0)
 
 func _fail(reason: String) -> void:
