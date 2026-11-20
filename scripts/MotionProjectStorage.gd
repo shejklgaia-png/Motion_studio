@@ -7,6 +7,8 @@ class_name MotionProjectStorage
 const MAX_PROJECT_BYTES := 64000000
 
 static func valid_source(source: String) -> bool:
+	if source.to_utf8_buffer().size() > MAX_PROJECT_BYTES:
+		return false
 	var parsed: Variant = JSON.parse_string(source)
 	if not (parsed is Dictionary):
 		return false
@@ -54,6 +56,8 @@ static func valid_source(source: String) -> bool:
 	return true
 
 static func read_valid(path: String) -> Dictionary:
+	if path.begins_with("content://"):
+		return {"ok": false}
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return {"ok": false}
@@ -79,7 +83,7 @@ static func read_with_backup(path: String) -> Dictionary:
 
 static func save_snapshot(path: String, snapshot: Dictionary) -> bool:
 	var source := JSON.stringify(snapshot, "  ")
-	if source.length() > MAX_PROJECT_BYTES or not valid_source(source):
+	if source.to_utf8_buffer().size() > MAX_PROJECT_BYTES or not valid_source(source):
 		return false
 	# Content URIs cannot be safely renamed or copied using filesystem APIs.
 	if path.begins_with("content://"):
