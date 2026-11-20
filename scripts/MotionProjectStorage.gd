@@ -86,6 +86,8 @@ static func save_snapshot(path: String, snapshot: Dictionary) -> bool:
 	if source.to_utf8_buffer().size() > MAX_PROJECT_BYTES or not valid_source(source):
 		return false
 	# Content URIs cannot be safely renamed or copied using filesystem APIs.
+	if path.is_empty() or path.ends_with(".tmp") or path.ends_with(".backup"):
+		return false
 	if path.begins_with("content://"):
 		return false
 	var temp_path := path + ".tmp"
