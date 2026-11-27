@@ -18,3 +18,9 @@
 
 ## SERA向け共通ナレッジ参照（2026-11-27）
 SERA関連の制作・変更を行う場合は [SERA_knowledge](https://github.com/shejklgaia-png/SERA_knowledge) 最新mainのREADME・AGENTS・関連本文を開発台帳と併用して着手前に確認する。V3の公開データ取得・証拠審査を参照。SERAの既存CI禁止と制作専用例外は最新のユーザー指示に従い、この追加規約は旧CI指示を再適用しない。Motion Studio本体のネットワーク処理やオフライン仕様は変更しない。
+
+## ナレッジ活用基盤 V4（2026-11-27）
+- 実制作で得た knowledge_snapshot.json / knowledge_evidence.json を保全。SERA_knowledge/tools/usage_log.py に審査済み実結果と各参照IDの adopt/reject/defer/not_applicable、理由、比較条件、観測日時を渡す。イベントはローカル保存し、公開・アップロードは自動化しない。未計測は unmeasured として分離。
+- tools/analytics.py report で収集済み成果物の参照件数と審査イベントの採用件数を別集計する。同一scope/protocol/metric/unit/direction内の観測値のみ時系列化し、未計測を0扱いしない。失敗タグと悪化指標の反復は再発候補として扱い、因果関係を断定しない。
+- analytics.py audit で関連ID欠落・重複・共有タグと肯否表現に基づく矛盾候補・review_due_jst/supersedes・鮮度を確認。期限やキーワードは再審査の目安であり、機械的な失効や自動削除はしない。transferで異分野資料を意図的に取得し、対象分野の原理・制約と比較する。実装判断・品質承認は従来通りAI監修と実証を必要とする。
+- ナレッジ利用の集計値は実在する記録のみ。架空の成功率、計測値、審査者は禁止。制作/ゲームCI制限と既存品質ゲートを変更しない。
